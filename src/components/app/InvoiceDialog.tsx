@@ -27,6 +27,7 @@ import {
   formatHours,
   vatAmount,
   amountIncVat,
+  paidForInvoice,
   processedHoursForInvoice,
   remainingInvoiceHours,
   round2,
@@ -63,6 +64,7 @@ const blank = {
   vatIncluded: true,
   vatRate: "20",
   vatMode: "full" as VatMode,
+  vatPaidBefore: "",
   paymentTerms: "30 days",
   notes: "",
   lineItems: [] as LineItemForm[],
@@ -134,6 +136,8 @@ export function InvoiceDialog({
         vatIncluded: invoice.vatIncluded,
         vatRate: String(invoice.vatRate),
         vatMode: invoice.vatMode ?? "full",
+        // Frozen value if already saved; otherwise default to what has been paid so far.
+        vatPaidBefore: String(invoice.vatPaidBefore ?? paidForInvoice(invoice.id, data.payments)),
         paymentTerms: invoice.paymentTerms,
         notes: invoice.notes ?? "",
         lineItems:
@@ -182,6 +186,7 @@ export function InvoiceDialog({
         vatIncluded: duplicateFrom.vatIncluded,
         vatRate: String(duplicateFrom.vatRate),
         vatMode: duplicateFrom.vatMode ?? "full",
+        vatPaidBefore: "",
         paymentTerms: duplicateFrom.paymentTerms,
         notes: duplicateFrom.notes ?? "",
         // Copy is a starting point for a new, independent invoice — never
@@ -241,6 +246,7 @@ export function InvoiceDialog({
     defaultClientId,
     data.clients,
     data.companies,
+    data.payments,
     data.settings.defaultVatRate,
     data.settings.invoicePrefix,
     data.settings.nextInvoiceNumber,
@@ -274,6 +280,7 @@ export function InvoiceDialog({
       vatIncluded: form.vatIncluded,
       vatRate: Number(form.vatRate) || 0,
       vatMode: form.vatMode,
+      vatPaidBefore: form.vatMode === "remaining" ? Number(form.vatPaidBefore) || 0 : undefined,
     } as Invoice;
     return { ex: draft.amountExVat, vat: vatAmount(draft), total: amountIncVat(draft) };
   }, [
@@ -283,6 +290,7 @@ export function InvoiceDialog({
     form.vatIncluded,
     form.vatRate,
     form.vatMode,
+    form.vatPaidBefore,
   ]);
 
   const setLineItem = (key: string, patch: Partial<LineItemForm>) =>
@@ -366,6 +374,10 @@ export function InvoiceDialog({
       vatIncluded: form.vatIncluded,
       vatRate: form.vatIncluded ? Number(form.vatRate) || 0 : 0,
       vatMode: form.vatMode,
+      vatPaidBefore:
+        form.vatIncluded && form.vatMode === "remaining"
+          ? round2(Math.max(0, Number(form.vatPaidBefore) || 0))
+          : undefined,
       paymentTerms: form.paymentTerms,
       notes: form.notes,
       lineItems: lineItemsPayload,
@@ -856,6 +868,23 @@ export function InvoiceDialog({
                   </SelectContent>
                 </Select>
               </Field>
+              {form.vatIncluded && form.vatMode === "remaining" ? (
+                <Field
+                  label="Already paid before VAT (ex VAT)"
+                  hint="e.g. the payroll payment. VAT is charged only on (invoice amount − this), and this base stays fixed when later payments are added."
+                  htmlFor="inv-vat-paid-before"
+                  className="sm:col-span-2"
+                >
+                  <Input
+                    id="inv-vat-paid-before"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.vatPaidBefore}
+                    onChange={(e) => set("vatPaidBefore", e.target.value)}
+                  />
+                </Field>
+              ) : null}
               <Field
                 label="Approval Status"
                 hint="Separate from payment status — used for internal sign-off."

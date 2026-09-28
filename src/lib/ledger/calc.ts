@@ -44,19 +44,23 @@ export function formatHours(value: number): string {
 }
 
 /**
- * `paidSoFar` (ex-VAT amount already paid) only matters when
- * `invoice.vatMode === "remaining"`: VAT is then charged on the currently
- * outstanding ex-VAT balance only, never retroactively on what's already
- * been paid. Omit it (or pass 0) for a fresh/unpaid invoice — the default
- * "full" mode ignores it entirely, matching the previous behaviour.
+ * Ex-VAT amount VAT is charged on. "full" mode: the whole invoice. "remaining"
+ * mode: invoice amount minus what had ALREADY been paid when VAT was applied
+ * (`invoice.vatPaidBefore`, e.g. a payroll payment). That figure is frozen on
+ * the invoice, so payments recorded afterwards never change the VAT base.
+ *
+ * `paidSoFar` is only a fallback for legacy rows that have no `vatPaidBefore`
+ * saved yet (old behaviour) — re-save such an invoice to freeze the value.
  */
+export function vatBase(invoice: Invoice, paidSoFar = 0): number {
+  if (invoice.vatMode !== "remaining") return invoice.amountExVat;
+  const paidBefore = invoice.vatPaidBefore ?? paidSoFar;
+  return Math.max(0, round2(invoice.amountExVat - paidBefore));
+}
+
 export function vatAmount(invoice: Invoice, paidSoFar = 0): number {
   if (!invoice.vatIncluded) return 0;
-  const base =
-    invoice.vatMode === "remaining"
-      ? Math.max(0, round2(invoice.amountExVat - paidSoFar))
-      : invoice.amountExVat;
-  return round2(base * (invoice.vatRate / 100));
+  return round2(vatBase(invoice, paidSoFar) * (invoice.vatRate / 100));
 }
 
 export function amountIncVat(invoice: Invoice, paidSoFar = 0): number {
@@ -104,6 +108,13 @@ export interface InvoiceView extends Invoice {
   /** Month the invoice was settled in full, yyyy-mm, when applicable. */
   monthOfPayment: string;
   lastPaymentDate: string;
+  /** Ex-VAT balance that VAT was charged on (== amountExVat unless "remaining" mode). */
+  vatBase: number;
+  /** Ex-VAT amount that had been paid before VAT was applied ("remaining" mode only, else 0). */
+  paidBeforeVat: number;
+  /** True when the printed invoice should show only the VAT-bearing balance
+   * (not the full original amount) — the full amount stays in history/ledger. */
+  balanceOnly: boolean;
 }
 
 export function buildInvoiceViews(
@@ -117,6 +128,9 @@ export function buildInvoiceViews(
     // VAT only on what's still outstanding ex-VAT (see vatAmount above).
     const paid = paidForInvoice(inv.id, payments);
     const vat = vatAmount(inv, paid);
+    const base = inv.vatIncluded ? vatBase(inv, paid) : inv.amountExVat;
+    const paidBeforeVat = round2(inv.amountExVat - base);
+    const balanceOnly = inv.vatIncluded && inv.vatMode === "remaining" && paidBeforeVat > 0.004;
     const total = round2(inv.amountExVat + vat);
     const client = byId.get(inv.clientId);
     const outstanding = round2(total - paid);
@@ -137,6 +151,9 @@ export function buildInvoiceViews(
       clientCompany: client?.company ?? "—",
       monthOfPayment: status === "paid" ? lastPaymentDate.slice(0, 7) : "",
       lastPaymentDate,
+      vatBase: base,
+      paidBeforeVat: balanceOnly ? paidBeforeVat : 0,
+      balanceOnly,
     };
   });
 }

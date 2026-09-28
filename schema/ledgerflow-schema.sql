@@ -279,6 +279,11 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS approved boolean NOT NULL DEFAULT 
 -- outstanding ex-VAT balance (never retroactively to amounts already paid).
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_mode text NOT NULL DEFAULT 'full';
 
+-- Ex-VAT amount already paid when VAT was applied in 'remaining' mode. VAT is
+-- charged on (amount_ex_vat - vat_paid_before) and stays fixed even as more
+-- payments are recorded later. NULL = legacy invoice.
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_paid_before numeric(12,2);
+
 -- "Additional Invoice": a separate, independent invoice that references an
 -- original invoice without ever modifying it. Multiple additional invoices
 -- may point at the same original.

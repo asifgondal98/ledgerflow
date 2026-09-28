@@ -99,6 +99,9 @@ export interface Invoice {
   vatRate: number; // percent
   /** How VAT is calculated against this invoice. Defaults to "full". */
   vatMode?: VatMode;
+  /** Ex-VAT amount already paid when VAT was applied (only for vatMode
+   * "remaining"). VAT is charged on amountExVat - vatPaidBefore, frozen. */
+  vatPaidBefore?: number;
   paymentTerms: string;
   notes?: string;
   lineItems?: InvoiceLineItem[];

@@ -109,8 +109,8 @@ const UsersIndexRoute = UsersIndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/activity-log/': typeof ActivityLogIndexRoute
   '/clients/$clientId': typeof ClientsClientIdRoute
+  '/activity-log/': typeof ActivityLogIndexRoute
   '/clients/': typeof ClientsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
   '/credit-notes/': typeof CreditNotesIndexRoute
@@ -127,8 +127,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/activity-log': typeof ActivityLogIndexRoute
   '/clients/$clientId': typeof ClientsClientIdRoute
+  '/activity-log': typeof ActivityLogIndexRoute
   '/clients': typeof ClientsIndexRoute
   '/companies': typeof CompaniesIndexRoute
   '/credit-notes': typeof CreditNotesIndexRoute
@@ -146,8 +146,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/activity-log/': typeof ActivityLogIndexRoute
   '/clients/$clientId': typeof ClientsClientIdRoute
+  '/activity-log/': typeof ActivityLogIndexRoute
   '/clients/': typeof ClientsIndexRoute
   '/companies/': typeof CompaniesIndexRoute
   '/credit-notes/': typeof CreditNotesIndexRoute
@@ -166,8 +166,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/activity-log/'
     | '/clients/$clientId'
+    | '/activity-log/'
     | '/clients/'
     | '/companies/'
     | '/credit-notes/'
@@ -184,8 +184,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/activity-log'
     | '/clients/$clientId'
+    | '/activity-log'
     | '/clients'
     | '/companies'
     | '/credit-notes'
@@ -202,8 +202,8 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/activity-log/'
     | '/clients/$clientId'
+    | '/activity-log/'
     | '/clients/'
     | '/companies/'
     | '/credit-notes/'
@@ -221,8 +221,8 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ActivityLogIndexRoute: typeof ActivityLogIndexRoute
   ClientsClientIdRoute: typeof ClientsClientIdRoute
+  ActivityLogIndexRoute: typeof ActivityLogIndexRoute
   ClientsIndexRoute: typeof ClientsIndexRoute
   CompaniesIndexRoute: typeof CompaniesIndexRoute
   CreditNotesIndexRoute: typeof CreditNotesIndexRoute
@@ -357,8 +357,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ActivityLogIndexRoute: ActivityLogIndexRoute,
   ClientsClientIdRoute: ClientsClientIdRoute,
+  ActivityLogIndexRoute: ActivityLogIndexRoute,
   ClientsIndexRoute: ClientsIndexRoute,
   CompaniesIndexRoute: CompaniesIndexRoute,
   CreditNotesIndexRoute: CreditNotesIndexRoute,

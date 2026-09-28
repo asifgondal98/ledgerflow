@@ -1,4 +1,4 @@
-import { formatDate, formatMoney } from "@/lib/ledger/calc";
+import { formatDate, formatMoney, round2 } from "@/lib/ledger/calc";
 import type { InvoiceView } from "@/lib/ledger/calc";
 import type { Client, Settings } from "@/lib/ledger/types";
 
@@ -130,7 +130,7 @@ export function InvoiceDocumentSafari({
                 <thead>
                   <tr>
                     <th>Description</th>
-                    {invoice.lineItems && invoice.lineItems.length > 0 ? (
+                    {invoice.balanceOnly ? null : invoice.lineItems && invoice.lineItems.length > 0 ? (
                       <>
                         <th className="id-num">Qty</th>
                         <th className="id-num">Unit Price</th>
@@ -145,7 +145,15 @@ export function InvoiceDocumentSafari({
                   </tr>
                 </thead>
                 <tbody>
-                  {invoice.lineItems && invoice.lineItems.length > 0 ? (
+                  {invoice.balanceOnly ? (
+                    // VAT was applied on the outstanding balance only: show just
+                    // that balance here. The full original amount and the earlier
+                    // payment stay in the ledger / statement history.
+                    <tr>
+                      <td>{invoice.description || "Services rendered"} — balance outstanding</td>
+                      <td className="id-num">{formatMoney(invoice.vatBase)}</td>
+                    </tr>
+                  ) : invoice.lineItems && invoice.lineItems.length > 0 ? (
                     invoice.lineItems.map((li) => (
                       <tr key={li.id}>
                         <td>{li.description || "—"}</td>
@@ -173,7 +181,7 @@ export function InvoiceDocumentSafari({
                 <dl>
                   <div>
                     <dt>Sub total</dt>
-                    <dd>{formatMoney(invoice.amountExVat)}</dd>
+                    <dd>{formatMoney(invoice.balanceOnly ? invoice.vatBase : invoice.amountExVat)}</dd>
                   </div>
                   {invoice.vatIncluded ? (
                     <div>
@@ -183,7 +191,11 @@ export function InvoiceDocumentSafari({
                   ) : null}
                   <div className="id-total">
                     <dt>Total due</dt>
-                    <dd>{formatMoney(invoice.total)}</dd>
+                    <dd>
+                      {formatMoney(
+                        invoice.balanceOnly ? round2(invoice.vatBase + invoice.vat) : invoice.total,
+                      )}
+                    </dd>
                   </div>
                 </dl>
               </section>

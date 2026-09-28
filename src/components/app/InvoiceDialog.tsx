@@ -27,7 +27,6 @@ import {
   formatHours,
   vatAmount,
   amountIncVat,
-  payrollPaidForInvoice,
   processedHoursForInvoice,
   remainingInvoiceHours,
   round2,
@@ -276,15 +275,7 @@ export function InvoiceDialog({
       vatRate: Number(form.vatRate) || 0,
       vatMode: form.vatMode,
     } as Invoice;
-    // When editing an existing invoice, "remaining balance" VAT excludes its
-    // Payroll payments (same rule as buildInvoiceViews), so the preview
-    // matches what the Invoices list will show. New invoices have none.
-    const payrollPaid = invoice ? payrollPaidForInvoice(invoice.id, data.payments) : 0;
-    return {
-      ex: draft.amountExVat,
-      vat: vatAmount(draft, payrollPaid),
-      total: amountIncVat(draft, payrollPaid),
-    };
+    return { ex: draft.amountExVat, vat: vatAmount(draft), total: amountIncVat(draft) };
   }, [
     form.billingType,
     form.amountExVat,
@@ -292,8 +283,6 @@ export function InvoiceDialog({
     form.vatIncluded,
     form.vatRate,
     form.vatMode,
-    invoice,
-    data.payments,
   ]);
 
   const setLineItem = (key: string, patch: Partial<LineItemForm>) =>
@@ -419,9 +408,6 @@ export function InvoiceDialog({
   };
 
   const selectedClient = data.clients.find((c) => c.id === form.clientId);
-  const billingCompany = selectedClient?.companyId
-    ? data.companies.find((co) => co.id === selectedClient.companyId)
-    : undefined;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -459,8 +445,7 @@ export function InvoiceDialog({
                   Client
                 </p>
                 <p className="font-medium">
-                  {selectedClient?.name || "—"}
-                  {selectedClient?.company ? ` — ${selectedClient.company}` : ""}
+                  {selectedClient?.company || selectedClient?.name || "—"}
                 </p>
               </div>
               <div>
@@ -606,19 +591,11 @@ export function InvoiceDialog({
                   <SelectContent>
                     {data.clients.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                        {c.company ? ` — ${c.company}` : ""}
+                        {c.company}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {selectedClient ? (
-                  <p className="mt-1.5 text-[12px] text-muted-foreground">
-                    Company: {selectedClient.company || "—"}
-                    {" · "}
-                    Billing entity: {billingCompany?.name || data.settings.businessName || "—"}
-                  </p>
-                ) : null}
               </Field>
               <Field label="Invoice Date" htmlFor="inv-date">
                 <Input
@@ -862,7 +839,7 @@ export function InvoiceDialog({
               </Field>
               <Field
                 label="VAT Basis"
-                hint="On remaining balance: VAT is charged only on the amount left after Payroll payments (payments recorded with the Payroll method carry no VAT). Ordinary payments never change the VAT."
+                hint="On remaining balance: VAT is charged only on what's still unpaid, never retroactively on amounts already paid."
                 className="sm:col-span-2"
               >
                 <Select

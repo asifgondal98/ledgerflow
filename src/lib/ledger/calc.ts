@@ -44,50 +44,28 @@ export function formatHours(value: number): string {
 }
 
 /**
- * `netPaid` = the ex-VAT amount already settled *without* VAT — i.e. the
- * invoice's "Payroll" payments (see payrollPaidForInvoice). It only matters
- * when `invoice.vatMode === "remaining"`: VAT is then charged on the
- * ex-VAT amount left after that payroll portion.
- *
- * IMPORTANT: never pass the sum of ALL payments here. Ordinary payments are
- * gross (they already include VAT), so subtracting them from the ex-VAT
- * amount would shrink the VAT — and therefore the invoice total — every
- * time a payment is added, making the outstanding balance drop too fast.
- * Omit it (or pass 0) for a fresh/unpaid invoice; the default "full" mode
- * ignores it entirely.
+ * `paidSoFar` (ex-VAT amount already paid) only matters when
+ * `invoice.vatMode === "remaining"`: VAT is then charged on the currently
+ * outstanding ex-VAT balance only, never retroactively on what's already
+ * been paid. Omit it (or pass 0) for a fresh/unpaid invoice — the default
+ * "full" mode ignores it entirely, matching the previous behaviour.
  */
-export function vatAmount(invoice: Invoice, netPaid = 0): number {
+export function vatAmount(invoice: Invoice, paidSoFar = 0): number {
   if (!invoice.vatIncluded) return 0;
   const base =
     invoice.vatMode === "remaining"
-      ? Math.max(0, round2(invoice.amountExVat - netPaid))
+      ? Math.max(0, round2(invoice.amountExVat - paidSoFar))
       : invoice.amountExVat;
   return round2(base * (invoice.vatRate / 100));
 }
 
-export function amountIncVat(invoice: Invoice, netPaid = 0): number {
-  return round2(invoice.amountExVat + vatAmount(invoice, netPaid));
+export function amountIncVat(invoice: Invoice, paidSoFar = 0): number {
+  return round2(invoice.amountExVat + vatAmount(invoice, paidSoFar));
 }
 
 export function paidForInvoice(invoiceId: string, payments: Payment[]): number {
   return round2(
     payments.filter((p) => p.invoiceId === invoiceId).reduce((sum, p) => sum + p.amount, 0),
-  );
-}
-
-/** Whether a payment was recorded with the "Payroll" method. Payroll
- * payments settle part of the invoice ex-VAT (no VAT is charged on them). */
-export function isPayrollPayment(p: Pick<Payment, "method">): boolean {
-  return (p.method ?? "").trim().toLowerCase() === "payroll";
-}
-
-/** Total of this invoice's "Payroll" payments — the ex-VAT portion that
- * "remaining balance" VAT mode excludes from the VAT base. */
-export function payrollPaidForInvoice(invoiceId: string, payments: Payment[]): number {
-  return round2(
-    payments
-      .filter((p) => p.invoiceId === invoiceId && isPayrollPayment(p))
-      .reduce((sum, p) => sum + p.amount, 0),
   );
 }
 
@@ -135,12 +113,10 @@ export function buildInvoiceViews(
 ): InvoiceView[] {
   const byId = new Map(clients.map((c) => [c.id, c]));
   return invoices.map((inv) => {
-    // "remaining" VAT mode charges VAT only on the ex-VAT amount left after
-    // the Payroll payments. Ordinary payments are gross (VAT included) and
-    // must NOT shrink the VAT base, otherwise the invoice total drops every
-    // time a payment is added (see vatAmount above).
+    // Paid amount is computed before VAT so "remaining" VAT mode can charge
+    // VAT only on what's still outstanding ex-VAT (see vatAmount above).
     const paid = paidForInvoice(inv.id, payments);
-    const vat = vatAmount(inv, payrollPaidForInvoice(inv.id, payments));
+    const vat = vatAmount(inv, paid);
     const total = round2(inv.amountExVat + vat);
     const client = byId.get(inv.clientId);
     const outstanding = round2(total - paid);

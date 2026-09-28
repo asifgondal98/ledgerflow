@@ -29,7 +29,6 @@ const invoiceInput = z.object({
   vatIncluded: z.boolean().default(false),
   vatRate: z.number().default(20),
   vatMode: z.enum(["full", "remaining"]).default("full"),
-  vatPaidBefore: z.number().min(0).default(0),
   paymentTerms: z.string().default(""),
   notes: z.string().optional(),
   // Approval status — kept fully separate from payment status.

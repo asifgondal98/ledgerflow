@@ -373,8 +373,3 @@ CREATE TABLE IF NOT EXISTS activity_log (
 
 CREATE INDEX IF NOT EXISTS activity_log_created_at_idx ON activity_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS activity_log_user_id_idx ON activity_log (user_id);
-
--- "Remaining" VAT mode: the ex-VAT amount already paid before VAT was applied.
--- VAT is charged on (amount_ex_vat - vat_paid_before); later payments are
--- gross (VAT included) and never change the VAT.
-ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vat_paid_before numeric(12,2) NOT NULL DEFAULT 0;

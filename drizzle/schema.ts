@@ -195,11 +195,6 @@ export const invoices = pgTable("invoices", {
   // prior behaviour. 'remaining' applies VAT only to the currently
   // outstanding ex-VAT balance, never retroactively to amounts already paid.
   vatMode: text("vat_mode").notNull().default("full"),
-  // Only used when vatMode = 'remaining': the ex-VAT amount the client had
-  // already paid BEFORE VAT was applied to this invoice. VAT is then charged
-  // on (amountExVat - vatPaidBefore). It is a fixed snapshot, so payments
-  // recorded afterwards (which already include VAT) never change the VAT.
-  vatPaidBefore: money("vat_paid_before").notNull().default(0),
   // Set when this invoice is an "Additional Invoice" against an original —
   // a separate, independently-tracked invoice that references but never
   // modifies the original. Several additional invoices may share one.

@@ -12,7 +12,7 @@ import {
   formatMoney,
   round2,
   totalsForClient,
-  type InvoiceView,
+  type InvoiceViewWithCredit,
 } from "@/lib/ledger/calc";
 import { downloadCsv } from "@/lib/ledger/csv";
 import { shouldUseSafariPrintLayout } from "@/lib/print-browser";
@@ -78,7 +78,7 @@ const TYPE_STYLES: Record<EntryType, string> = {
 type DueFilter = "all" | "due" | "overdue";
 export type DueStatus = "due" | "overdue";
 
-export interface OutstandingRow extends InvoiceView {
+export interface OutstandingRow extends InvoiceViewWithCredit {
   dueStatus: DueStatus;
 }
 
@@ -127,7 +127,7 @@ function StatementsPage() {
 }
 
 function StatementsPageContent() {
-  const { data, invoiceViews } = useLedger();
+  const { data, invoiceViews, invoiceViewsWithCredit, creditBalanceByClient } = useLedger();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // "" = whole account history (previous behaviour, unchanged default).
   const [selectedMonth, setSelectedMonth] = useState<string>("");
@@ -234,19 +234,25 @@ function StatementsPageContent() {
         outstandingTotals: { total: 0, overdue: 0, due: 0 },
       };
     }
-    const invoicesOwed: OutstandingRow[] = invoiceViews
-      .filter((v) => v.clientId === client.id && v.outstanding > 0.004)
+    // Uses the credit-adjusted figures: an earlier overpayment on one invoice is
+    // automatically netted off the client's next unpaid invoice(s), oldest first.
+    const invoicesOwed: OutstandingRow[] = invoiceViewsWithCredit
+      .filter((v) => v.clientId === client.id && v.effectiveOutstanding > 0.004)
       .map((v) => ({ ...v, dueStatus: (v.ageing > 0 ? "overdue" : "due") as DueStatus }))
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.number.localeCompare(b.number));
-    const total = round2(invoicesOwed.reduce((s, r) => s + r.outstanding, 0));
+    const total = round2(invoicesOwed.reduce((s, r) => s + r.effectiveOutstanding, 0));
     const overdue = round2(
-      invoicesOwed.filter((r) => r.dueStatus === "overdue").reduce((s, r) => s + r.outstanding, 0),
+      invoicesOwed
+        .filter((r) => r.dueStatus === "overdue")
+        .reduce((s, r) => s + r.effectiveOutstanding, 0),
     );
     return {
       outstandingInvoices: invoicesOwed,
       outstandingTotals: { total, overdue, due: round2(total - overdue) },
     };
-  }, [client, invoiceViews]);
+  }, [client, invoiceViewsWithCredit]);
+
+  const creditOnAccount = client ? (creditBalanceByClient.get(client.id) ?? 0) : 0;
 
   const filteredOutstandingInvoices = useMemo(
     () =>
@@ -467,6 +473,13 @@ function StatementsPageContent() {
               tone="warning"
             />
           </div>
+          {creditOnAccount > 0.004 ? (
+            <div className="border-b border-border bg-success-soft px-4 py-2.5 text-[13px] text-success">
+              <span className="font-semibold">Credit on account: {formatMoney(creditOnAccount)}</span>{" "}
+              — client has paid more than invoiced. It will be netted off their next invoice
+              automatically.
+            </div>
+          ) : null}
           {filteredOutstandingInvoices.length === 0 ? (
             <EmptyState
               title={outstandingInvoices.length === 0 ? "Nothing outstanding" : "No matches"}
@@ -499,7 +512,12 @@ function StatementsPageContent() {
                         {r.number}
                       </TD>
                       <TD mono align="right">
-                        {formatMoney(r.outstanding)}
+                        {formatMoney(r.effectiveOutstanding)}
+                        {r.creditApplied > 0.004 ? (
+                          <div className="text-[11px] font-normal text-muted-foreground">
+                            after {formatMoney(r.creditApplied)} credit applied
+                          </div>
+                        ) : null}
                       </TD>
                       <TD>{formatDate(r.dueDate)}</TD>
                       <TD>
@@ -850,7 +868,14 @@ function StatementDocument({
                           <tr key={r.id}>
                             <td className="sd-nowrap">{formatDate(r.invoiceDate)}</td>
                             <td className="sd-nowrap">{r.number}</td>
-                            <td className="sd-num">{formatMoney(r.outstanding)}</td>
+                            <td className="sd-num">
+                              {formatMoney(r.effectiveOutstanding)}
+                              {r.creditApplied > 0.004 ? (
+                                <div style={{ fontSize: "0.85em", opacity: 0.7 }}>
+                                  after {formatMoney(r.creditApplied)} credit applied
+                                </div>
+                              ) : null}
+                            </td>
                             <td className="sd-nowrap">{formatDate(r.dueDate)}</td>
                             <td
                               className={
@@ -1100,7 +1125,14 @@ function StatementDocumentSafari({
                           <tr key={r.id}>
                             <td className="sd-nowrap">{formatDate(r.invoiceDate)}</td>
                             <td className="sd-nowrap">{r.number}</td>
-                            <td className="sd-num">{formatMoney(r.outstanding)}</td>
+                            <td className="sd-num">
+                              {formatMoney(r.effectiveOutstanding)}
+                              {r.creditApplied > 0.004 ? (
+                                <div style={{ fontSize: "0.85em", opacity: 0.7 }}>
+                                  after {formatMoney(r.creditApplied)} credit applied
+                                </div>
+                              ) : null}
+                            </td>
                             <td className="sd-nowrap">{formatDate(r.dueDate)}</td>
                             <td
                               className={

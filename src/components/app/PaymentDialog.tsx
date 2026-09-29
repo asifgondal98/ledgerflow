@@ -44,7 +44,9 @@ export function PaymentDialog({
    * whole point of "partial" is a specific figure the user must enter. */
   blankAmount?: boolean | undefined;
 }) {
-  const { data, invoiceViews, addPayment, updatePayment } = useLedger();
+  // Credit-adjusted views: an earlier overpayment is already netted off, so the
+  // suggested amount / "due" figure is what the client really still owes.
+  const { data, invoiceViewsWithCredit: invoiceViews, addPayment, updatePayment } = useLedger();
   const [clientId, setClientId] = useState("");
   const [invoiceId, setInvoiceId] = useState("");
   const [date, setDate] = useState(today());
@@ -86,7 +88,7 @@ export function PaymentDialog({
     setInvoiceId(invoice?.id ?? "");
     setDate(today());
     setMethod("Bank Transfer");
-    setAmount(invoice && !blankAmount ? String(invoice.outstanding) : "");
+    setAmount(invoice && !blankAmount ? String(invoice.effectiveOutstanding) : "");
     setReference("");
     setNotes("");
     setAmountMode("amount");
@@ -130,7 +132,9 @@ export function PaymentDialog({
   // invoice total, not against a balance that already excludes this payment.
   const availableToApply =
     selected != null
-      ? selected.outstanding + (payment && payment.invoiceId === selected.id ? payment.amount : 0)
+      ? payment && payment.invoiceId === selected.id
+        ? selected.outstanding + payment.amount
+        : selected.effectiveOutstanding
       : 0;
 
   const fail = (message: string): void => {
@@ -233,7 +237,7 @@ export function PaymentDialog({
                 setInvoiceId(v);
                 if (!payment) {
                   const inv = invoiceViews.find((i) => i.id === v);
-                  if (inv) setAmount(blankAmount ? "" : String(inv.outstanding));
+                  if (inv) setAmount(blankAmount ? "" : String(inv.effectiveOutstanding));
                 }
               }}
               disabled={!!payment}
@@ -249,7 +253,7 @@ export function PaymentDialog({
                 ) : (
                   clientInvoices.map((i) => (
                     <SelectItem key={i.id} value={i.id}>
-                      {i.number} — {formatMoney(i.outstanding)} due
+                      {i.number} — {formatMoney(i.effectiveOutstanding)} due
                     </SelectItem>
                   ))
                 )}
@@ -286,7 +290,7 @@ export function PaymentDialog({
                 variant={amountMode === "amount" ? "default" : "outline"}
                 onClick={() => {
                   setAmountMode("amount");
-                  if (selected) setAmount(String(selected.outstanding));
+                  if (selected) setAmount(String(selected.effectiveOutstanding));
                 }}
               >
                 Fixed Amount

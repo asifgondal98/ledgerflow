@@ -44,15 +44,15 @@ function ReportsPage() {
 }
 
 function ReportsPageContent() {
-  const { data, invoiceViews } = useLedger();
+  const { data, invoiceViews, invoiceViewsWithCredit } = useLedger();
   const [statementClient, setStatementClient] = useState(data.clients[0]?.id ?? "");
 
   const outstanding = useMemo(
     () =>
-      invoiceViews
-        .filter((i) => i.outstanding > 0.004)
+      invoiceViewsWithCredit
+        .filter((i) => i.effectiveOutstanding > 0.004)
         .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    [invoiceViews],
+    [invoiceViewsWithCredit],
   );
 
   const summary = useMemo(() => {
@@ -67,12 +67,12 @@ function ReportsPageContent() {
       paid,
       outstanding: round2(total - paid),
       counts: {
-        paid: invoiceViews.filter((i) => i.status === "paid").length,
-        partial: invoiceViews.filter((i) => i.status === "partial").length,
-        unpaid: invoiceViews.filter((i) => i.status === "unpaid").length,
+        paid: invoiceViewsWithCredit.filter((i) => i.effectiveStatus === "paid").length,
+        partial: invoiceViewsWithCredit.filter((i) => i.effectiveStatus === "partial").length,
+        unpaid: invoiceViewsWithCredit.filter((i) => i.effectiveStatus === "unpaid").length,
       },
     };
-  }, [invoiceViews]);
+  }, [invoiceViews, invoiceViewsWithCredit]);
 
   const statement = useMemo(() => {
     const invoices = invoiceViews.filter((i) => i.clientId === statementClient);
@@ -158,10 +158,10 @@ function ReportsPageContent() {
                       {formatMoney(i.paid)}
                     </TD>
                     <TD mono align="right" className="font-medium">
-                      {formatMoney(i.outstanding)}
+                      {formatMoney(i.effectiveOutstanding)}
                     </TD>
                     <TD>
-                      <StatusBadge status={i.status} />
+                      <StatusBadge status={i.effectiveStatus} />
                     </TD>
                   </TR>
                 ))}

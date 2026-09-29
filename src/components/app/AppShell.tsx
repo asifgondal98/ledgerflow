@@ -215,7 +215,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function AppHeader({ title, onMenu }: { title: string; onMenu: () => void }) {
-  const { data, invoiceViews } = useLedger();
+  const { data, invoiceViews, invoiceViewsWithCredit } = useLedger();
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
 
@@ -232,8 +232,12 @@ function AppHeader({ title, onMenu }: { title: string; onMenu: () => void }) {
     };
   }, [query, data.clients, invoiceViews]);
 
-  const openInvoices = invoiceViews.filter((i) => i.status !== "paid").length;
-  const overdueInvoices = invoiceViews.filter((i) => i.ageing > 0).length;
+  // Credit-adjusted: an invoice already covered by an earlier overpayment is
+  // neither "open" nor "overdue".
+  const openInvoices = invoiceViewsWithCredit.filter((i) => i.effectiveStatus !== "paid").length;
+  const overdueInvoices = invoiceViewsWithCredit.filter(
+    (i) => i.effectiveOutstanding > 0.004 && i.ageing > 0,
+  ).length;
   const showResults = query.trim().length >= 2;
 
   return (

@@ -51,7 +51,7 @@ function Dashboard() {
 }
 
 function DashboardContent() {
-  const { data, invoiceViews } = useLedger();
+  const { data, invoiceViews, invoiceViewsWithCredit } = useLedger();
 
   const totals = useMemo(() => {
     const invoiced = round2(invoiceViews.reduce((s, i) => s + i.total, 0));
@@ -60,18 +60,18 @@ function DashboardContent() {
       invoiced,
       received,
       outstanding: round2(invoiced - received),
-      paidCount: invoiceViews.filter((i) => i.status === "paid").length,
-      pendingCount: invoiceViews.filter((i) => i.status !== "paid").length,
+      paidCount: invoiceViewsWithCredit.filter((i) => i.effectiveStatus === "paid").length,
+      pendingCount: invoiceViewsWithCredit.filter((i) => i.effectiveStatus !== "paid").length,
     };
-  }, [invoiceViews]);
+  }, [invoiceViews, invoiceViewsWithCredit]);
 
   const outstandingRows = useMemo(
     () =>
-      invoiceViews
-        .filter((i) => i.outstanding > 0.004)
+      invoiceViewsWithCredit
+        .filter((i) => i.effectiveOutstanding > 0.004)
         .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
         .slice(0, 8),
-    [invoiceViews],
+    [invoiceViewsWithCredit],
   );
 
   const recentPayments = useMemo(() => {
@@ -227,10 +227,10 @@ function DashboardContent() {
                         {formatMoney(i.paid)}
                       </TD>
                       <TD mono align="right">
-                        {formatMoney(i.outstanding)}
+                        {formatMoney(i.effectiveOutstanding)}
                       </TD>
                       <TD>
-                        <StatusBadge status={i.status} />
+                        <StatusBadge status={i.effectiveStatus} />
                       </TD>
                     </TR>
                   ))}

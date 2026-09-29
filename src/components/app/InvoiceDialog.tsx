@@ -136,8 +136,11 @@ export function InvoiceDialog({
         vatIncluded: invoice.vatIncluded,
         vatRate: String(invoice.vatRate),
         vatMode: invoice.vatMode ?? "full",
-        // Frozen value if already saved; otherwise default to what has been paid so far.
-        vatPaidBefore: String(invoice.vatPaidBefore ?? paidForInvoice(invoice.id, data.payments)),
+        // Frozen value if already saved (> 0); a missing OR 0 value (legacy rows / DB
+        // default 0) falls back to what has been paid so far, so the field is prefilled.
+        vatPaidBefore: String(
+          invoice.vatPaidBefore || paidForInvoice(invoice.id, data.payments),
+        ),
         paymentTerms: invoice.paymentTerms,
         notes: invoice.notes ?? "",
         lineItems:

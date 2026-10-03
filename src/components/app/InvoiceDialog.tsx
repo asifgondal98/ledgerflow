@@ -31,8 +31,26 @@ import {
   processedHoursForInvoice,
   remainingInvoiceHours,
   round2,
+  endClientOptions,
+  suggestNextInvoiceNumber,
 } from "@/lib/ledger/calc";
-import type { Invoice, VatMode } from "@/lib/ledger/types";
+import type { Invoice, LedgerData, VatMode } from "@/lib/ledger/types";
+
+/** Next number in line for this client's company (e.g. 644 -> 645), from the invoices that already exist. */
+function nextInvoiceNumberFor(data: LedgerData, clientId: string): string {
+  const c = data.clients.find((x) => x.id === clientId);
+  const company = c?.companyId ? data.companies.find((co) => co.id === c.companyId) : undefined;
+  const prefix = company?.invoicePrefix?.trim()
+    ? company.invoicePrefix
+    : data.settings.invoicePrefix;
+  return suggestNextInvoiceNumber({
+    invoices: data.invoices,
+    clients: data.clients,
+    clientId,
+    prefix,
+    fallbackNext: data.settings.nextInvoiceNumber,
+  });
+}
 
 type BillingType = "amount" | "hours" | "items";
 
@@ -56,7 +74,9 @@ const blank = {
   invoiceDate: "",
   dueDate: "",
   poReference: "",
+  endClient: "",
   description: "",
+  description2: "",
   billingType: "amount" as BillingType,
   amountExVat: "",
   hours: "",
@@ -123,7 +143,9 @@ export function InvoiceDialog({
         invoiceDate: invoice.invoiceDate,
         dueDate: invoice.dueDate,
         poReference: invoice.poReference ?? "",
+        endClient: invoice.endClient ?? "",
         description: invoice.description,
+        description2: invoice.description2 ?? "",
         billingType:
           invoice.lineItems && invoice.lineItems.length > 0
             ? "items"
@@ -138,9 +160,7 @@ export function InvoiceDialog({
         vatMode: invoice.vatMode ?? "full",
         // Frozen value if already saved (> 0); a missing OR 0 value (legacy rows / DB
         // default 0) falls back to what has been paid so far, so the field is prefilled.
-        vatPaidBefore: String(
-          invoice.vatPaidBefore || paidForInvoice(invoice.id, data.payments),
-        ),
+        vatPaidBefore: String(invoice.vatPaidBefore || paidForInvoice(invoice.id, data.payments)),
         paymentTerms: invoice.paymentTerms,
         notes: invoice.notes ?? "",
         lineItems:
@@ -159,16 +179,10 @@ export function InvoiceDialog({
       return;
     }
     const client = (id: string) => data.clients.find((c) => c.id === id);
-    const companyPrefixFor = (clientId: string) => {
-      const c = client(clientId);
-      const company = c?.companyId ? data.companies.find((co) => co.id === c.companyId) : undefined;
-      return company?.invoicePrefix?.trim() ? company.invoicePrefix : data.settings.invoicePrefix;
-    };
+    const nextNumberFor = (clientId: string) => nextInvoiceNumberFor(data, clientId);
     const start = today();
     if (duplicateFrom) {
-      const suggestedNumber = `${companyPrefixFor(duplicateFrom.clientId)}${String(
-        data.settings.nextInvoiceNumber,
-      ).padStart(3, "0")}`;
+      const suggestedNumber = nextNumberFor(duplicateFrom.clientId);
       setForm({
         ...blank,
         number: suggestedNumber,
@@ -176,7 +190,9 @@ export function InvoiceDialog({
         invoiceDate: start,
         dueDate: plusDays(start, 30),
         poReference: duplicateFrom.poReference ?? "",
+        endClient: duplicateFrom.endClient ?? "",
         description: duplicateFrom.description,
+        description2: duplicateFrom.description2 ?? "",
         billingType:
           duplicateFrom.lineItems && duplicateFrom.lineItems.length > 0
             ? "items"
@@ -211,9 +227,7 @@ export function InvoiceDialog({
       // An Additional Invoice is a wholly new, independently-tracked
       // invoice — own number, own line items, own VAT setting, own payment
       // tracking — that only references the original for traceability.
-      const suggestedNumber = `${companyPrefixFor(additionalFor.clientId)}${String(
-        data.settings.nextInvoiceNumber,
-      ).padStart(3, "0")}`;
+      const suggestedNumber = nextNumberFor(additionalFor.clientId);
       setForm({
         ...blank,
         number: suggestedNumber,
@@ -221,6 +235,7 @@ export function InvoiceDialog({
         invoiceDate: start,
         dueDate: plusDays(start, 30),
         poReference: additionalFor.poReference ?? "",
+        endClient: additionalFor.endClient ?? "",
         vatRate: String(data.settings.defaultVatRate),
         paymentTerms: additionalFor.paymentTerms,
         originalInvoiceId: additionalFor.id,
@@ -229,9 +244,7 @@ export function InvoiceDialog({
     }
     const startClientId = defaultClientId ?? data.clients[0]?.id ?? "";
     const startClient = data.clients.find((c) => c.id === startClientId);
-    const suggestedNumber = `${companyPrefixFor(startClientId)}${String(
-      data.settings.nextInvoiceNumber,
-    ).padStart(3, "0")}`;
+    const suggestedNumber = nextNumberFor(startClientId);
     setForm({
       ...blank,
       number: suggestedNumber,
@@ -249,11 +262,19 @@ export function InvoiceDialog({
     defaultClientId,
     data.clients,
     data.companies,
+    data.invoices,
     data.payments,
     data.settings.defaultVatRate,
     data.settings.invoicePrefix,
     data.settings.nextInvoiceNumber,
   ]);
+
+  // Names already used as End Client for the selected client (suggestions only;
+  // anything can still be typed).
+  const endClientSuggestions = useMemo(
+    () => endClientOptions(data.invoices, form.clientId).names,
+    [data.invoices, form.clientId],
+  );
 
   const set = <K extends keyof typeof blank>(key: K, value: (typeof blank)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -370,7 +391,9 @@ export function InvoiceDialog({
       invoiceDate: form.invoiceDate,
       dueDate: form.dueDate,
       poReference: form.poReference.trim(),
+      endClient: form.endClient.trim(),
       description: form.description.trim(),
+      description2: form.description2.trim(),
       amountExVat: amount,
       hours,
       rate,
@@ -423,6 +446,11 @@ export function InvoiceDialog({
   };
 
   const selectedClient = data.clients.find((c) => c.id === form.clientId);
+  /** Billing company (Companies page) this client is saved under, if any. */
+  const billingCompanyOf = (clientId: string): string => {
+    const co = data.clients.find((c) => c.id === clientId)?.companyId;
+    return co ? (data.companies.find((x) => x.id === co)?.name ?? "") : "";
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -462,6 +490,11 @@ export function InvoiceDialog({
                 <p className="font-medium">
                   {selectedClient?.company || selectedClient?.name || "—"}
                 </p>
+                {selectedClient && billingCompanyOf(selectedClient.id) ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Company: {billingCompanyOf(selectedClient.id)}
+                  </p>
+                ) : null}
               </div>
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -481,6 +514,14 @@ export function InvoiceDialog({
                     PO / Reference
                   </p>
                   <p>{form.poReference}</p>
+                </div>
+              ) : null}
+              {form.endClient.trim() ? (
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    End Client
+                  </p>
+                  <p>{form.endClient.trim()}</p>
                 </div>
               ) : null}
               {additionalFor ? (
@@ -513,6 +554,7 @@ export function InvoiceDialog({
                     Description
                   </p>
                   <p>{form.description}</p>
+                  {form.description2.trim() ? <p>{form.description2}</p> : null}
                 </div>
               ) : null}
               {form.billingType === "items" && form.lineItems.length > 0 ? (
@@ -582,7 +624,14 @@ export function InvoiceDialog({
                   onChange={(e) => set("number", e.target.value)}
                 />
               </Field>
-              <Field label="Client">
+              <Field
+                label="Client"
+                hint={
+                  selectedClient
+                    ? `Billing company: ${billingCompanyOf(selectedClient.id) || "— not set"}`
+                    : undefined
+                }
+              >
                 <Select
                   value={form.clientId}
                   onValueChange={(v) => {
@@ -590,9 +639,17 @@ export function InvoiceDialog({
                       const clientRate = data.clients.find((c) => c.id === v)?.rate;
                       const shouldPrefillRate =
                         f.billingType === "hours" && !f.rate && clientRate != null;
+                      // A brand-new invoice still carrying the auto-suggested number
+                      // follows the newly picked client's company; a number the
+                      // person typed (or any edit/additional invoice) is left alone.
+                      const numberWasAuto =
+                        !invoice &&
+                        !additionalFor &&
+                        f.number === nextInvoiceNumberFor(data, f.clientId);
                       return {
                         ...f,
                         clientId: v,
+                        number: numberWasAuto ? nextInvoiceNumberFor(data, v) : f.number,
                         rate: shouldPrefillRate ? String(clientRate) : f.rate,
                         // The picked Hours entry belonged to the old client — clear it.
                         hoursEntryId: "",
@@ -607,6 +664,7 @@ export function InvoiceDialog({
                     {data.clients.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.company}
+                        {c.name ? ` — ${c.name}` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -639,12 +697,45 @@ export function InvoiceDialog({
                   onChange={(e) => set("poReference", e.target.value)}
                 />
               </Field>
+              <Field
+                label="End Client (optional)"
+                htmlFor="inv-end-client"
+                hint="Who this invoice is really for, when one client account carries several. Leave empty if not needed."
+              >
+                <Input
+                  id="inv-end-client"
+                  list="inv-end-client-options"
+                  value={form.endClient}
+                  onChange={(e) => set("endClient", e.target.value)}
+                  placeholder="e.g. Site / end customer name"
+                  autoComplete="off"
+                />
+                <datalist id="inv-end-client-options">
+                  {endClientSuggestions.map((n) => (
+                    <option key={n} value={n} />
+                  ))}
+                </datalist>
+              </Field>
               <Field label="Description" htmlFor="inv-desc" className="sm:col-span-2">
                 <Input
                   id="inv-desc"
                   value={form.description}
                   onChange={(e) => set("description", e.target.value)}
                   placeholder="Services supplied"
+                />
+              </Field>
+              <Field
+                label="Second Description (optional)"
+                htmlFor="inv-desc2"
+                hint="Printed under the main description. Works with Fixed Amount, Hours × Rate and Line Items."
+                className="sm:col-span-2"
+              >
+                <Textarea
+                  id="inv-desc2"
+                  rows={2}
+                  value={form.description2}
+                  onChange={(e) => set("description2", e.target.value)}
+                  placeholder="Extra detail, e.g. site, period or job reference"
                 />
               </Field>
               <Field label="Billing Type" className="sm:col-span-2">

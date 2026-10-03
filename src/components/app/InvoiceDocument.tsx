@@ -110,6 +110,9 @@ export function InvoiceDocument({
                   {invoice.poReference ? (
                     <p className="id-lines">PO/Ref: {invoice.poReference}</p>
                   ) : null}
+                  {invoice.endClient?.trim() ? (
+                    <p className="id-lines">Client: {invoice.endClient.trim()}</p>
+                  ) : null}
                 </div>
               </header>
 
@@ -120,6 +123,25 @@ export function InvoiceDocument({
                 {client?.address ? <p className="id-lines">{client.address}</p> : null}
                 {client?.vatNumber ? <p className="id-lines">VAT No. {client.vatNumber}</p> : null}
               </section>
+
+              {/* Main + optional second description. Always printed, including
+                  for Line Items invoices (whose rows carry their own text). */}
+              {invoice.lineItems && invoice.lineItems.length > 0 && !invoice.balanceOnly ? (
+                invoice.description?.trim() || invoice.description2?.trim() ? (
+                  <section className="id-desc-block" style={{ marginBottom: "8px" }}>
+                    {invoice.description?.trim() ? (
+                      <p className="id-lines" style={{ whiteSpace: "pre-line" }}>
+                        {invoice.description.trim()}
+                      </p>
+                    ) : null}
+                    {invoice.description2?.trim() ? (
+                      <p className="id-lines" style={{ whiteSpace: "pre-line" }}>
+                        {invoice.description2.trim()}
+                      </p>
+                    ) : null}
+                  </section>
+                ) : null
+              ) : null}
 
               <table>
                 <thead>
@@ -145,7 +167,12 @@ export function InvoiceDocument({
                     // that balance here. The full original amount and the earlier
                     // payment stay in the ledger / statement history.
                     <tr>
-                      <td>{invoice.description || "Services rendered"} — balance outstanding</td>
+                      <td>
+                        {invoice.description || "Services rendered"} — balance outstanding
+                        {invoice.description2?.trim() ? (
+                          <div style={{ whiteSpace: "pre-line" }}>{invoice.description2.trim()}</div>
+                        ) : null}
+                      </td>
                       <td className="id-num">{formatMoney(invoice.vatBase)}</td>
                     </tr>
                   ) : invoice.lineItems && invoice.lineItems.length > 0 ? (
@@ -159,7 +186,12 @@ export function InvoiceDocument({
                     ))
                   ) : (
                     <tr>
-                      <td>{invoice.description || "Services rendered"}</td>
+                      <td>
+                        {invoice.description || "Services rendered"}
+                        {invoice.description2?.trim() ? (
+                          <div style={{ whiteSpace: "pre-line" }}>{invoice.description2.trim()}</div>
+                        ) : null}
+                      </td>
                       {invoice.hours != null && invoice.rate != null ? (
                         <>
                           <td className="id-num">{invoice.hours}</td>

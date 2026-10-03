@@ -11,7 +11,7 @@
  * Permission model is deliberately module x action, NOT field-level:
  * "can this user create invoices" rather than "can this user edit an
  * invoice's VAT rate". Every module gets `view`; most get
- * create/edit/delete; a few are read-only; `invoices` additionally gets
+ * create/edit/delete; a few are read-only; `invoices` and `salary` additionally get
  * `approve` (approving/unapproving is treated as a distinct, more sensitive
  * action from ordinary editing).
  *
@@ -30,6 +30,8 @@ export const MODULES = [
   "expenses",
   "creditNotes",
   "hours",
+  "salary",
+  "staff",
   "reports",
   "settings",
 ] as const;
@@ -57,6 +59,10 @@ export const MODULE_ACTIONS: Record<Module, readonly Action[]> = {
   expenses: ["view", "create", "edit", "delete"],
   creditNotes: ["view", "create", "edit", "delete"],
   hours: ["view", "create", "edit", "delete"],
+  // approve = verify / close / reopen a salary month (the sensitive steps)
+  salary: ["view", "create", "edit", "delete", "approve"],
+  // NI numbers + bank details live here, so it is granted separately
+  staff: ["view", "create", "edit"],
   reports: ["view"],
   settings: ["view", "edit"],
 };
@@ -72,6 +78,8 @@ export const MODULE_LABELS: Record<Module, string> = {
   expenses: "Expenses",
   creditNotes: "Credit Notes",
   hours: "Hours",
+  salary: "Salary Sheet",
+  staff: "Staff (NI & bank details)",
   reports: "Reports",
   settings: "Settings",
 };

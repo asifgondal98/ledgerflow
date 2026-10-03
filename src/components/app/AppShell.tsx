@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import {
+  Banknote,
   Bell,
   Building2,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   FileText,
   HardHat,
   History,
+  IdCard,
   LayoutDashboard,
   Menu,
   Receipt,
@@ -38,6 +40,8 @@ type NavPath =
   | "/expenses"
   | "/hours"
   | "/subcontracting"
+  | "/salary"
+  | "/staff"
   | "/credit-notes"
   | "/statements"
   | "/reports"
@@ -80,6 +84,8 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
     items: [
       { to: "/hours", label: "Hours", icon: Clock, module: "hours" },
       { to: "/subcontracting", label: "Subcontracting", icon: HardHat, module: "subcontracting" },
+      { to: "/salary", label: "Salary Sheet", icon: Banknote, module: "salary" },
+      { to: "/staff", label: "Staff", icon: IdCard, module: "staff" },
       { to: "/expenses", label: "Expenses", icon: ReceiptText, module: "expenses" },
     ],
   },

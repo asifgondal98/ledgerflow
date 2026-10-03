@@ -378,3 +378,143 @@ CREATE TABLE IF NOT EXISTS activity_log (
 
 CREATE INDEX IF NOT EXISTS activity_log_created_at_idx ON activity_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS activity_log_user_id_idx ON activity_log (user_id);
+
+/* ---------- Salary sheet ---------- */
+
+-- Staff master record (one row per person, ever). NI + bank details are
+-- sensitive: guarded by the separate "staff" permission module.
+CREATE TABLE IF NOT EXISTS payroll_staff (
+  id             text PRIMARY KEY,
+  rss_id         text NOT NULL DEFAULT '',
+  ess_id         text NOT NULL DEFAULT '',
+  ni             text NOT NULL DEFAULT '',
+  name           text NOT NULL,
+  tag            text NOT NULL DEFAULT '',
+  account_detail text NOT NULL DEFAULT '',
+  area           text NOT NULL DEFAULT '',
+  notes          text,
+  active         boolean NOT NULL DEFAULT true
+);
+CREATE INDEX IF NOT EXISTS payroll_staff_rss_id_idx ON payroll_staff (rss_id);
+CREATE INDEX IF NOT EXISTS payroll_staff_ess_id_idx ON payroll_staff (ess_id);
+
+-- The payroll columns of the sheet. Managed from the UI.
+CREATE TABLE IF NOT EXISTS payroll_companies (
+  id          text PRIMARY KEY,
+  name        text NOT NULL,
+  order_index integer NOT NULL DEFAULT 0,
+  active      boolean NOT NULL DEFAULT true
+);
+
+-- One month = one run. draft -> reviewed -> verified -> closed (locked).
+CREATE TABLE IF NOT EXISTS salary_periods (
+  id         text PRIMARY KEY,
+  month      text NOT NULL UNIQUE, -- yyyy-mm
+  status     text NOT NULL DEFAULT 'draft',
+  notes      text,
+  closed_at  timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- One line of the sheet: one staff member in one month.
+CREATE TABLE IF NOT EXISTS salary_entries (
+  id             text PRIMARY KEY,
+  period_id      text NOT NULL REFERENCES salary_periods(id) ON DELETE CASCADE,
+  staff_id       text NOT NULL REFERENCES payroll_staff(id) ON DELETE CASCADE,
+  rss_amount     numeric(12,2) NOT NULL DEFAULT 0,
+  rss_hours      numeric(10,2) NOT NULL DEFAULT 0,
+  ess_amount     numeric(12,2) NOT NULL DEFAULT 0,
+  ess_hours      numeric(10,2) NOT NULL DEFAULT 0,
+  carry_forward  numeric(12,2) NOT NULL DEFAULT 0,
+  tax_deduction  numeric(12,2) NOT NULL DEFAULT 0,
+  deduction      numeric(12,2) NOT NULL DEFAULT 0,
+  deduction_note text,
+  check_status   text NOT NULL DEFAULT '',
+  flag           text NOT NULL DEFAULT '',
+  payroll        jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE UNIQUE INDEX IF NOT EXISTS salary_entries_period_staff_uq ON salary_entries (period_id, staff_id);
+
+-- P1, P2, ... cash payments (any number per line).
+CREATE TABLE IF NOT EXISTS salary_payments (
+  id        text PRIMARY KEY,
+  entry_id  text NOT NULL REFERENCES salary_entries(id) ON DELETE CASCADE,
+  date      text NOT NULL,
+  amount    numeric(12,2) NOT NULL,
+  method    text NOT NULL DEFAULT 'Bank Transfer',
+  reference text NOT NULL DEFAULT '',
+  notes     text
+);
+CREATE INDEX IF NOT EXISTS salary_payments_entry_idx ON salary_payments (entry_id);
+
+-- Raw shift export rows (RSS / ESS) for drill-down and re-matching.
+CREATE TABLE IF NOT EXISTS salary_shifts (
+  id            text PRIMARY KEY,
+  period_id     text NOT NULL REFERENCES salary_periods(id) ON DELETE CASCADE,
+  source        text NOT NULL,
+  staff_id      text REFERENCES payroll_staff(id) ON DELETE SET NULL,
+  employee_id   text NOT NULL DEFAULT '',
+  employee_name text NOT NULL DEFAULT '',
+  ni            text NOT NULL DEFAULT '',
+  date          text NOT NULL DEFAULT '',
+  client_name   text NOT NULL DEFAULT '',
+  site_name     text NOT NULL DEFAULT '',
+  hours         numeric(10,2) NOT NULL DEFAULT 0,
+  rate          numeric(12,2) NOT NULL DEFAULT 0,
+  amount        numeric(12,2) NOT NULL DEFAULT 0,
+  expenses      numeric(12,2) NOT NULL DEFAULT 0,
+  penalty       numeric(12,2) NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS salary_shifts_period_source_idx ON salary_shifts (period_id, source);
+CREATE INDEX IF NOT EXISTS salary_shifts_staff_idx ON salary_shifts (staff_id);
+
+/* ---------- Staff details ("All Payroll Format" fields) ---------- */
+
+ALTER TABLE payroll_staff
+  ADD COLUMN IF NOT EXISTS dob                   text,
+  ADD COLUMN IF NOT EXISTS gender                text,
+  ADD COLUMN IF NOT EXISTS rtw_share_code        text,
+  ADD COLUMN IF NOT EXISTS share_code_expiry     text,
+  ADD COLUMN IF NOT EXISTS address               text,
+  ADD COLUMN IF NOT EXISTS town                  text,
+  ADD COLUMN IF NOT EXISTS post_code             text,
+  ADD COLUMN IF NOT EXISTS uniform               text,
+  ADD COLUMN IF NOT EXISTS account_holder_name   text,
+  ADD COLUMN IF NOT EXISTS account_number        text,
+  ADD COLUMN IF NOT EXISTS sort_code             text,
+  ADD COLUMN IF NOT EXISTS employment_start_date text,
+  ADD COLUMN IF NOT EXISTS employment_end_date   text,
+  ADD COLUMN IF NOT EXISTS contract_status       text,  -- Active | P45 | Need P45
+  ADD COLUMN IF NOT EXISTS email                 text,
+  ADD COLUMN IF NOT EXISTS immigration_status    text,
+  ADD COLUMN IF NOT EXISTS hours_allowed         text,
+  ADD COLUMN IF NOT EXISTS sia_number            text,
+  ADD COLUMN IF NOT EXISTS role                  text,
+  ADD COLUMN IF NOT EXISTS service_type          text;
+
+-- End Client on invoices (optional, nullable; existing rows untouched).
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS end_client text;
+
+/* ---------- Invoice second description ---------- */
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS description_2 text;
+
+/* ---------- Dynamic shift companies ---------- */
+
+-- Each person's ID inside shift companies other than RSS / ESS: { "ABC": "1234" }.
+ALTER TABLE payroll_staff ADD COLUMN IF NOT EXISTS ext_ids jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+-- Earnings from shift companies other than RSS / ESS: { "ABC": { "amount": 10, "hours": 2 } }.
+ALTER TABLE salary_entries ADD COLUMN IF NOT EXISTS extra jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+-- The companies that supply raw shift exports. Managed from the UI.
+CREATE TABLE IF NOT EXISTS shift_companies (
+  code        text PRIMARY KEY,
+  name        text NOT NULL,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  integer NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO shift_companies (code, name, active, sort_order)
+VALUES ('RSS', 'RSS', true, 0), ('ESS', 'ESS', true, 1)
+ON CONFLICT (code) DO NOTHING;

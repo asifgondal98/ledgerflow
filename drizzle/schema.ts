@@ -15,6 +15,8 @@ import {
   timestamp,
   varchar,
   jsonb,
+  index,
+  uniqueIndex,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import type { Permissions } from "../src/lib/permissions";
@@ -179,7 +181,14 @@ export const invoices = pgTable("invoices", {
   invoiceDate: text("invoice_date").notNull(), // yyyy-mm-dd
   dueDate: text("due_date").notNull(), // yyyy-mm-dd
   poReference: text("po_reference"),
+  // Optional "who this was really billed for" — used when one client record
+  // (e.g. a management/agency account) carries invoices for several end
+  // clients. Plain nullable text: existing rows stay NULL (= unassigned) and
+  // are never modified.
+  endClient: text("end_client"),
   description: text("description").notNull().default(""),
+  // Optional second description line (printed under the main description).
+  description2: text("description_2"),
   amountExVat: money("amount_ex_vat").notNull(),
   // Only set when the invoice was billed as Hours × Rate instead of a fixed
   // amount. `amountExVat` above always holds the final total either way.
@@ -392,3 +401,152 @@ export const settings = pgTable("settings", {
     .notNull()
     .default(0),
 });
+
+/* ---------- Salary sheet (staff, periods, shifts, payroll, cash payments) ---------- */
+
+// One row per staff member — ever. Repeats nothing month to month; every
+// month's salary line points back here. NI / bank details live here only and
+// are protected by the separate "staff" permission module.
+export const payrollStaff = pgTable("payroll_staff", {
+  id: text("id").primaryKey(),
+  rssId: text("rss_id").notNull().default(""),
+  essId: text("ess_id").notNull().default(""),
+  // The person's ID inside every other shift company: { "ABC": "1234" }.
+  // RSS / ESS keep their own columns above.
+  extIds: jsonb("ext_ids").$type<Record<string, string>>().notNull().default({}),
+  ni: text("ni").notNull().default(""),
+  name: text("name").notNull(),
+  tag: text("tag").notNull().default(""),
+  // "Name 12345678 04-29-09" — free text for now, same as the Excel column.
+  accountDetail: text("account_detail").notNull().default(""),
+  area: text("area").notNull().default(""),
+  notes: text("notes"),
+  active: boolean("active").notNull().default(true),
+  // --- "All Payroll Format" fields (all nullable; dates are yyyy-mm-dd text; age is never stored) ---
+  dob: text("dob"),
+  gender: text("gender"),
+  rtwShareCode: text("rtw_share_code"),
+  shareCodeExpiry: text("share_code_expiry"),
+  address: text("address"),
+  town: text("town"),
+  postCode: text("post_code"),
+  uniform: text("uniform"),
+  accountHolderName: text("account_holder_name"),
+  accountNumber: text("account_number"),
+  sortCode: text("sort_code"),
+  employmentStartDate: text("employment_start_date"),
+  employmentEndDate: text("employment_end_date"),
+  contractStatus: text("contract_status"), // Active | P45 | Need P45
+  email: text("email"),
+  immigrationStatus: text("immigration_status"),
+  hoursAllowed: text("hours_allowed"),
+  siaNumber: text("sia_number"),
+  role: text("role"),
+  serviceType: text("service_type"),
+});
+
+// The companies that supply raw shift exports. RSS and ESS are seeded; the
+// client can add as many more as needed from the UI (no code change).
+export const shiftCompanies = pgTable("shift_companies", {
+  code: text("code").primaryKey(), // upper-case, e.g. "RSS"
+  name: text("name").notNull(),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// The payroll columns of the sheet (ESS, Fortexo, Secure FM, SES, SPL,
+// HS Guarding, Leverage, ...). Managed from the UI so a new company never
+// needs a code change.
+export const payrollCompanies = pgTable("payroll_companies", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  orderIndex: integer("order_index").notNull().default(0),
+  active: boolean("active").notNull().default(true),
+});
+
+// One month = one run. draft -> reviewed -> verified -> closed (locked).
+export const salaryPeriods = pgTable("salary_periods", {
+  id: text("id").primaryKey(),
+  month: text("month").notNull().unique(), // yyyy-mm
+  status: text("status").notNull().default("draft"),
+  notes: text("notes"),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// One line of the sheet: one staff member in one month.
+export const salaryEntries = pgTable(
+  "salary_entries",
+  {
+    id: text("id").primaryKey(),
+    periodId: text("period_id")
+      .notNull()
+      .references(() => salaryPeriods.id, { onDelete: "cascade" }),
+    staffId: text("staff_id")
+      .notNull()
+      .references(() => payrollStaff.id, { onDelete: "cascade" }),
+    rssAmount: money("rss_amount").notNull().default(0),
+    rssHours: numeric("rss_hours", { precision: 10, scale: 2, mode: "number" }).notNull().default(0),
+    essAmount: money("ess_amount").notNull().default(0),
+    essHours: numeric("ess_hours", { precision: 10, scale: 2, mode: "number" }).notNull().default(0),
+    // Earnings from every other shift company: { "ABC": { amount, hours } }.
+    // Derived from salary_shifts on each import, like the RSS / ESS columns.
+    extra: jsonb("extra")
+      .$type<Record<string, { amount: number; hours: number }>>()
+      .notNull()
+      .default({}),
+    // -OverPaid / +Remaining from the previous month (replaces the Excel
+    // "OverPaid last month" lookup sheet).
+    carryForward: money("carry_forward").notNull().default(0),
+    taxDeduction: money("tax_deduction").notNull().default(0),
+    deduction: money("deduction").notNull().default(0),
+    deductionNote: text("deduction_note"),
+    checkStatus: text("check_status").notNull().default(""), // "" | Reviewed | Verified
+    flag: text("flag").notNull().default(""), // the sheet's "Client" column (e.g. "pay back")
+    // { [payrollCompanyId]: amount } — sparse, so adding a company needs no migration.
+    payroll: jsonb("payroll").$type<Record<string, number>>().notNull().default({}),
+  },
+  (t) => [uniqueIndex("salary_entries_period_staff_uq").on(t.periodId, t.staffId)],
+);
+
+// P1, P2, ... — any number of cash payments per line (the sheet shows P1-P4).
+export const salaryPayments = pgTable("salary_payments", {
+  id: text("id").primaryKey(),
+  entryId: text("entry_id")
+    .notNull()
+    .references(() => salaryEntries.id, { onDelete: "cascade" }),
+  date: text("date").notNull(), // yyyy-mm-dd
+  amount: money("amount").notNull(),
+  method: text("method").notNull().default("Bank Transfer"),
+  reference: text("reference").notNull().default(""),
+  notes: text("notes"),
+});
+
+// The raw shift export rows, kept so any amount can be traced back to its shifts.
+export const salaryShifts = pgTable(
+  "salary_shifts",
+  {
+    id: text("id").primaryKey(),
+    periodId: text("period_id")
+      .notNull()
+      .references(() => salaryPeriods.id, { onDelete: "cascade" }),
+    source: text("source").notNull(), // "RSS" | "ESS"
+    staffId: text("staff_id").references(() => payrollStaff.id, { onDelete: "set null" }),
+    employeeId: text("employee_id").notNull().default(""),
+    employeeName: text("employee_name").notNull().default(""),
+    ni: text("ni").notNull().default(""),
+    date: text("date").notNull().default(""),
+    clientName: text("client_name").notNull().default(""),
+    siteName: text("site_name").notNull().default(""),
+    hours: numeric("hours", { precision: 10, scale: 2, mode: "number" }).notNull().default(0),
+    rate: money("rate").notNull().default(0),
+    amount: money("amount").notNull().default(0),
+    expenses: money("expenses").notNull().default(0),
+    penalty: money("penalty").notNull().default(0),
+  },
+  (t) => [
+    index("salary_shifts_period_source_idx").on(t.periodId, t.source),
+    index("salary_shifts_staff_idx").on(t.staffId),
+  ],
+);

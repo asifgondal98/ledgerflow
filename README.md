@@ -12,6 +12,9 @@ produces per-client statements of account.
 - **Statements** — per-client running account statement with CSV export and a
   print-ready layout (uses the business details from Settings)
 - **Hours, Subcontracting, Expenses** — operational ledgers
+- **Salary Sheet, Staff** — monthly staff pay: shift-export / Excel import, payroll columns,
+  P1..Pn cash payments, carry-forward between months, Excel export. Staff (NI numbers, bank
+  details) has its own permission module. Run `schema/salary-migration.sql` once on an existing DB.
 - **Reports and Settings** — receivables reports; business, VAT and payment configuration
 
 ## Tech stack

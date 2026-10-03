@@ -21,7 +21,9 @@ import { Route as InvoicesIndexRouteImport } from './routes/invoices.index'
 import { Route as PaymentsIndexRouteImport } from './routes/payments.index'
 import { Route as RecycleBinIndexRouteImport } from './routes/recycle-bin.index'
 import { Route as ReportsIndexRouteImport } from './routes/reports.index'
+import { Route as SalaryIndexRouteImport } from './routes/salary.index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
+import { Route as StaffIndexRouteImport } from './routes/staff.index'
 import { Route as StatementsIndexRouteImport } from './routes/statements.index'
 import { Route as SubcontractingIndexRouteImport } from './routes/subcontracting.index'
 import { Route as UsersIndexRouteImport } from './routes/users.index'
@@ -86,9 +88,19 @@ const ReportsIndexRoute = ReportsIndexRouteImport.update({
   path: '/reports/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SalaryIndexRoute = SalaryIndexRouteImport.update({
+  id: '/salary/',
+  path: '/salary/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/settings/',
   path: '/settings/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StaffIndexRoute = StaffIndexRouteImport.update({
+  id: '/staff/',
+  path: '/staff/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StatementsIndexRoute = StatementsIndexRouteImport.update({
@@ -120,7 +132,9 @@ export interface FileRoutesByFullPath {
   '/payments/': typeof PaymentsIndexRoute
   '/recycle-bin/': typeof RecycleBinIndexRoute
   '/reports/': typeof ReportsIndexRoute
+  '/salary/': typeof SalaryIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/staff/': typeof StaffIndexRoute
   '/statements/': typeof StatementsIndexRoute
   '/subcontracting/': typeof SubcontractingIndexRoute
   '/users/': typeof UsersIndexRoute
@@ -138,7 +152,9 @@ export interface FileRoutesByTo {
   '/payments': typeof PaymentsIndexRoute
   '/recycle-bin': typeof RecycleBinIndexRoute
   '/reports': typeof ReportsIndexRoute
+  '/salary': typeof SalaryIndexRoute
   '/settings': typeof SettingsIndexRoute
+  '/staff': typeof StaffIndexRoute
   '/statements': typeof StatementsIndexRoute
   '/subcontracting': typeof SubcontractingIndexRoute
   '/users': typeof UsersIndexRoute
@@ -157,7 +173,9 @@ export interface FileRoutesById {
   '/payments/': typeof PaymentsIndexRoute
   '/recycle-bin/': typeof RecycleBinIndexRoute
   '/reports/': typeof ReportsIndexRoute
+  '/salary/': typeof SalaryIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/staff/': typeof StaffIndexRoute
   '/statements/': typeof StatementsIndexRoute
   '/subcontracting/': typeof SubcontractingIndexRoute
   '/users/': typeof UsersIndexRoute
@@ -177,7 +195,9 @@ export interface FileRouteTypes {
     | '/payments/'
     | '/recycle-bin/'
     | '/reports/'
+    | '/salary/'
     | '/settings/'
+    | '/staff/'
     | '/statements/'
     | '/subcontracting/'
     | '/users/'
@@ -195,7 +215,9 @@ export interface FileRouteTypes {
     | '/payments'
     | '/recycle-bin'
     | '/reports'
+    | '/salary'
     | '/settings'
+    | '/staff'
     | '/statements'
     | '/subcontracting'
     | '/users'
@@ -213,7 +235,9 @@ export interface FileRouteTypes {
     | '/payments/'
     | '/recycle-bin/'
     | '/reports/'
+    | '/salary/'
     | '/settings/'
+    | '/staff/'
     | '/statements/'
     | '/subcontracting/'
     | '/users/'
@@ -232,7 +256,9 @@ export interface RootRouteChildren {
   PaymentsIndexRoute: typeof PaymentsIndexRoute
   RecycleBinIndexRoute: typeof RecycleBinIndexRoute
   ReportsIndexRoute: typeof ReportsIndexRoute
+  SalaryIndexRoute: typeof SalaryIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
+  StaffIndexRoute: typeof StaffIndexRoute
   StatementsIndexRoute: typeof StatementsIndexRoute
   SubcontractingIndexRoute: typeof SubcontractingIndexRoute
   UsersIndexRoute: typeof UsersIndexRoute
@@ -324,11 +350,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReportsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/salary/': {
+      id: '/salary/'
+      path: '/salary'
+      fullPath: '/salary/'
+      preLoaderRoute: typeof SalaryIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/': {
       id: '/settings/'
       path: '/settings'
       fullPath: '/settings/'
       preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staff/': {
+      id: '/staff/'
+      path: '/staff'
+      fullPath: '/staff/'
+      preLoaderRoute: typeof StaffIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/statements/': {
@@ -368,7 +408,9 @@ const rootRouteChildren: RootRouteChildren = {
   PaymentsIndexRoute: PaymentsIndexRoute,
   RecycleBinIndexRoute: RecycleBinIndexRoute,
   ReportsIndexRoute: ReportsIndexRoute,
+  SalaryIndexRoute: SalaryIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
+  StaffIndexRoute: StaffIndexRoute,
   StatementsIndexRoute: StatementsIndexRoute,
   SubcontractingIndexRoute: SubcontractingIndexRoute,
   UsersIndexRoute: UsersIndexRoute,

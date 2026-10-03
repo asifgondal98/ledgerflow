@@ -4,12 +4,14 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
+  Banknote,
   Building2,
   ClipboardList,
   Clock,
   FileMinus,
   FileText,
   HardHat,
+  IdCard,
   LayoutDashboard,
   LockKeyhole,
   Pencil,
@@ -82,6 +84,8 @@ const MODULE_ICONS: Record<Module, typeof LayoutDashboard> = {
   expenses: ReceiptText,
   creditNotes: FileMinus,
   hours: Clock,
+  salary: Banknote,
+  staff: IdCard,
   reports: Receipt,
   settings: SettingsIcon,
 };

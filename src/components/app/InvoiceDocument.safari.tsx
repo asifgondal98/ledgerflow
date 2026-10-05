@@ -24,10 +24,13 @@ export function InvoiceDocumentSafari({
   settings,
   client,
   invoice,
+  remainingHours = 0,
 }: {
   settings: Settings;
   client: Client | undefined;
   invoice: InvoiceView;
+  /** Remaining (unprocessed) hours of this invoice; 0 when none / not an hours invoice. */
+  remainingHours?: number;
 }) {
   const contactLines: { label: string; value: string }[] = [
     { label: "Email", value: settings.businessEmail.trim() },
@@ -280,6 +283,7 @@ export function InvoiceDocumentSafari({
               </section>
 
               <section className="id-terms">
+                <p>Remaining hours: {remainingHours}</p>
                 {invoice.paymentTerms ? <p>Payment terms: {invoice.paymentTerms}</p> : null}
                 {invoice.notes ? <p className="id-lines">{invoice.notes}</p> : null}
               </section>

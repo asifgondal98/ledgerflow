@@ -32,6 +32,22 @@ export function InvoiceDocumentSafari({
   /** Remaining (unprocessed) hours of this invoice; 0 when none / not an hours invoice. */
   remainingHours?: number;
 }) {
+  // Payroll split invoices: print ONLY the remaining-hours part. Sub total, VAT and
+  // Total are shown for that part alone (display only; stored invoice data is untouched).
+  const remainingOnly =
+    !invoice.balanceOnly &&
+    !(invoice.lineItems && invoice.lineItems.length > 0) &&
+    invoice.hours != null &&
+    invoice.rate != null &&
+    (invoice.payrollHours ?? 0) > 0 &&
+    (invoice.payrollRate ?? 0) > 0;
+  const remainingAmount = remainingOnly
+    ? round2(invoice.amountExVat - (invoice.payrollHours ?? 0) * (invoice.payrollRate ?? 0))
+    : 0;
+  const remainingVat = invoice.vatIncluded
+    ? round2((remainingAmount * (invoice.vatRate ?? 0)) / 100)
+    : 0;
+
   const contactLines: { label: string; value: string }[] = [
     { label: "Email", value: settings.businessEmail.trim() },
     { label: "Phone", value: settings.businessPhone.trim() },
@@ -250,20 +266,30 @@ export function InvoiceDocumentSafari({
                   <div>
                     <dt>Sub total</dt>
                     <dd>
-                      {formatMoney(invoice.balanceOnly ? invoice.vatBase : invoice.amountExVat)}
+                      {formatMoney(
+                        remainingOnly
+                          ? remainingAmount
+                          : invoice.balanceOnly
+                            ? invoice.vatBase
+                            : invoice.amountExVat,
+                      )}
                     </dd>
                   </div>
                   {invoice.vatIncluded ? (
                     <div>
                       <dt>VAT ({invoice.vatRate}%)</dt>
-                      <dd>{formatMoney(invoice.vat)}</dd>
+                      <dd>{formatMoney(remainingOnly ? remainingVat : invoice.vat)}</dd>
                     </div>
                   ) : null}
                   <div className="id-total">
                     <dt>Total due</dt>
                     <dd>
                       {formatMoney(
-                        invoice.balanceOnly ? round2(invoice.vatBase + invoice.vat) : invoice.total,
+                        remainingOnly
+                          ? round2(remainingAmount + remainingVat)
+                          : invoice.balanceOnly
+                            ? round2(invoice.vatBase + invoice.vat)
+                            : invoice.total,
                       )}
                     </dd>
                   </div>

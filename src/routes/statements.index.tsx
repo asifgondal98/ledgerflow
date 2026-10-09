@@ -26,6 +26,7 @@ import {
   type InvoiceViewWithCredit,
 } from "@/lib/ledger/calc";
 import { downloadCsv } from "@/lib/ledger/csv";
+import { downloadStatementXlsx } from "@/lib/ledger/statementExcel";
 import { shouldUseSafariPrintLayout } from "@/lib/print-browser";
 import { EmptyState, Panel, PanelHeader, TableWrap } from "@/components/app/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/app/DataTable";
@@ -386,6 +387,65 @@ function StatementsPageContent() {
     );
   };
 
+  const exportExcel = () => {
+    if (!client || !totals) return;
+    const creditNotesNet = round2(accountClosingBalance - totals.outstanding);
+    void downloadStatementXlsx({
+      filename: `statement-${fileSlug(client.company)}${effectiveEndClient ? `-${fileSlug(endClientLabel)}` : ""}-${statementDate}${selectedMonth ? `-${selectedMonth}` : ""}.xlsx`,
+      business: {
+        name: settings.businessName,
+        address: settings.businessAddress,
+        email: settings.businessEmail,
+        phone: settings.businessPhone,
+        vatNumber: settings.vatNumber,
+        companyNumber: settings.companyNumber,
+      },
+      client: {
+        company: client.company,
+        name: client.name,
+        address: client.address ?? "",
+        vatNumber: client.vatNumber ?? "",
+        accountReference: client.accountReference ?? "",
+      },
+      endClientLabel: endClientLabel || undefined,
+      periodLabel: selectedMonth ? formatMonth(selectedMonth) : undefined,
+      statementDate,
+      outstandingTotals,
+      outstandingInvoices: filteredOutstandingInvoices.map((r) => ({
+        invoiceDate: r.invoiceDate,
+        number: r.number,
+        outstanding: r.effectiveOutstanding,
+        dueDate: r.dueDate,
+        status: DUE_STATUS_LABEL[r.dueStatus] as "Due" | "Overdue",
+        ageing: r.dueStatus === "overdue" ? r.ageing : null,
+        description: r.description || "",
+        poReference: r.poReference || "",
+        note: [
+          r.credited > 0.004 ? `after ${formatMoney(r.credited)} credit note deducted` : "",
+          r.creditApplied > 0.004 ? `after ${formatMoney(r.creditApplied)} credit applied` : "",
+        ]
+          .filter(Boolean)
+          .join("; "),
+      })),
+      openingBalance: selectedMonth ? openingBalance : undefined,
+      ledger: visibleRows.map((r) => ({
+        date: r.date,
+        type: r.type,
+        reference: r.reference,
+        description: r.description,
+        debit: r.debit,
+        credit: r.credit,
+        balance: r.balance,
+      })),
+      summary: {
+        invoiced: totals.invoiced,
+        paid: totals.paid,
+        creditNotesNet,
+        balanceDue: closingBalance,
+      },
+    });
+  };
+
   if (data.clients.length === 0 || !client || !totals) {
     return (
       <Panel>
@@ -462,6 +522,14 @@ function StatementsPageContent() {
               </SelectContent>
             </Select>
             <div className="flex items-center gap-2 sm:ml-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportExcel}
+                disabled={visibleRows.length === 0 && outstandingInvoices.length === 0}
+              >
+                <Download className="size-4" /> Export Excel
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

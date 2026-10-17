@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -55,7 +55,11 @@ const TAB_NAME: Record<TabKind, string> = {
   details: "Employee details",
 };
 /** Passed to every file tab: lets it hand a file to the tab it really belongs to. */
-interface TabProps {
+interface CompletionProps {
+  onComplete: () => void;
+  onBusyChange: (busy: boolean) => void;
+}
+interface TabProps extends CompletionProps {
   /** A file moved here from the wrong tab; read it as soon as the tab opens. */
   initialFile?: File | null;
   onWrongTab: (kind: TabKind, file: File) => void;
@@ -71,6 +75,8 @@ interface Props {
 
 export function ImportDialog({ open, onOpenChange, periodId, month, companies }: Props) {
   const [tab, setTab] = useState("shifts");
+  const [importBusy, setImportBusy] = useState(false);
+  const completion = { onComplete: () => onOpenChange(false), onBusyChange: setImportBusy };
   // A file dropped into the wrong tab is moved to the right one, not rejected.
   const [handoff, setHandoff] = useState<{ tab: TabKind; file: File } | null>(null);
   const onWrongTab = (kind: TabKind, file: File) => {
@@ -80,7 +86,12 @@ export function ImportDialog({ open, onOpenChange, periodId, month, companies }:
   };
   const initialFor = (k: TabKind) => (handoff?.tab === k ? handoff.file : null);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!importBusy) onOpenChange(v);
+      }}
+    >
       <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Import into {formatMonthLabel(month)}</DialogTitle>
@@ -88,37 +99,50 @@ export function ImportDialog({ open, onOpenChange, periodId, month, companies }:
             Files are read in your browser — nothing is saved until you press Import.
           </DialogDescription>
         </DialogHeader>
-        <Tabs
-          value={tab}
-          onValueChange={(v) => {
-            setHandoff(null);
-            setTab(v);
-          }}
-        >
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="shifts">Shift export</TabsTrigger>
-            <TabsTrigger value="payroll">Payroll file</TabsTrigger>
-            <TabsTrigger value="master">Excel salary sheet</TabsTrigger>
-            <TabsTrigger value="details">Employee details</TabsTrigger>
-          </TabsList>
-          <TabsContent value="shifts" className="pt-3">
-            <ShiftImport
-              periodId={periodId}
-              month={month}
-              initialFile={initialFor("shifts")}
-              onWrongTab={onWrongTab}
-            />
-          </TabsContent>
-          <TabsContent value="payroll" className="pt-3">
-            <PayrollImport periodId={periodId} companies={companies} />
-          </TabsContent>
-          <TabsContent value="master" className="pt-3">
-            <MasterImport periodId={periodId} initialFile={initialFor("master")} onWrongTab={onWrongTab} />
-          </TabsContent>
-          <TabsContent value="details" className="pt-3">
-            <DetailsImport initialFile={initialFor("details")} onWrongTab={onWrongTab} />
-          </TabsContent>
-        </Tabs>
+        <fieldset disabled={importBusy} className="min-w-0">
+          <Tabs
+            value={tab}
+            onValueChange={(v) => {
+              if (importBusy) return;
+              setHandoff(null);
+              setTab(v);
+            }}
+          >
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+              <TabsTrigger value="shifts">Shift export</TabsTrigger>
+              <TabsTrigger value="payroll">Payroll file</TabsTrigger>
+              <TabsTrigger value="master">Excel salary sheet</TabsTrigger>
+              <TabsTrigger value="details">Employee details</TabsTrigger>
+            </TabsList>
+            <TabsContent value="shifts" className="pt-3">
+              <ShiftImport
+                {...completion}
+                periodId={periodId}
+                month={month}
+                initialFile={initialFor("shifts")}
+                onWrongTab={onWrongTab}
+              />
+            </TabsContent>
+            <TabsContent value="payroll" className="pt-3">
+              <PayrollImport {...completion} periodId={periodId} companies={companies} />
+            </TabsContent>
+            <TabsContent value="master" className="pt-3">
+              <MasterImport
+                {...completion}
+                periodId={periodId}
+                initialFile={initialFor("master")}
+                onWrongTab={onWrongTab}
+              />
+            </TabsContent>
+            <TabsContent value="details" className="pt-3">
+              <DetailsImport
+                {...completion}
+                initialFile={initialFor("details")}
+                onWrongTab={onWrongTab}
+              />
+            </TabsContent>
+          </Tabs>
+        </fieldset>
       </DialogContent>
     </Dialog>
   );
@@ -143,6 +167,8 @@ function ShiftImport({
   month,
   initialFile,
   onWrongTab,
+  onComplete,
+  onBusyChange,
 }: { periodId: string; month: string } & TabProps) {
   const refresh = useRefreshSalary();
   const { can } = usePermissions();
@@ -172,6 +198,16 @@ function ShiftImport({
   );
   const [createMissing, setCreateMissing] = useState(canCreateStaff);
   const [busy, setBusy] = useState(false);
+  const running = useRef(false);
+  const upload = useRef({ key: "", id: "" });
+  const uploadIdFor = (key: string) => {
+    if (upload.current.key !== key) upload.current = { key, id: crypto.randomUUID() };
+    return upload.current.id;
+  };
+  useEffect(() => {
+    onBusyChange(busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState<string | null>(null);
 
@@ -195,6 +231,7 @@ function ShiftImport({
     } catch (err) {
       toast.error(errorMessage(err, "Could not read that file."));
     } finally {
+      running.current = false;
       setBusy(false);
     }
   }
@@ -208,7 +245,10 @@ function ShiftImport({
   const noRate = useMemo(() => {
     if (!parse) return { shifts: 0, hours: 0 };
     const bad = parse.rows.filter((r) => r.hours > 0 && r.amount === 0);
-    return { shifts: bad.length, hours: Math.round(bad.reduce((t, r) => t + r.hours, 0) * 100) / 100 };
+    return {
+      shifts: bad.length,
+      hours: Math.round(bad.reduce((t, r) => t + r.hours, 0) * 100) / 100,
+    };
   }, [parse]);
 
   const outside = useMemo(() => {
@@ -218,8 +258,27 @@ function ShiftImport({
       .reduce((s, [, n]) => s + n, 0);
   }, [parse, month]);
 
+  // Only shifts dated in the month being paid are imported (on by default). A shift
+  // export that covers several months used to be added to ONE month in full, which
+  // multiplied a person's hours and pay.
+  const [onlyMonth, setOnlyMonth] = useState(true);
+  const toImport = useMemo(
+    () =>
+      parse
+        ? onlyMonth
+          ? parse.rows.filter((r) => !r.date || r.date.startsWith(month))
+          : parse.rows
+        : [],
+    [parse, onlyMonth, month],
+  );
+  const importHours = useMemo(
+    () => Math.round(toImport.reduce((t, r) => t + r.hours, 0) * 100) / 100,
+    [toImport],
+  );
+
   async function run() {
-    if (!parse || parse.rows.length === 0) return;
+    if (!parse || toImport.length === 0 || running.current) return;
+    running.current = true;
     setBusy(true);
     setResult(null);
     try {
@@ -227,15 +286,18 @@ function ShiftImport({
       let matched = 0;
       let created = 0;
       let unmatched = 0;
-      for (let i = 0; i < parse.rows.length; i += SIZE) {
+      for (let i = 0; i < toImport.length; i += SIZE) {
         setProgress(
-          `Uploading shifts ${Math.min(i + SIZE, parse.rows.length)} / ${parse.rows.length}…`,
+          `Uploading shifts ${Math.min(i + SIZE, toImport.length)} / ${toImport.length}…`,
         );
         const r = await importShiftsChunk({
           data: {
+            uploadId: uploadIdFor(JSON.stringify([periodId, source, createMissing, toImport])),
+            chunkIndex: i / SIZE,
+            totalChunks: Math.ceil(toImport.length / SIZE),
             periodId,
             source,
-            rows: parse.rows.slice(i, i + SIZE),
+            rows: toImport.slice(i, i + SIZE),
             reset: i === 0,
             createMissingStaff: createMissing && canCreateStaff,
           },
@@ -243,20 +305,23 @@ function ShiftImport({
         matched += r.matched;
         created += r.created;
         unmatched += r.unmatched;
+        if (r.complete) break;
       }
       setProgress("Building each person's totals…");
       const done = await recomputeSheetFromShifts({ data: { periodId, source, fileName } });
       await refresh();
       setResult(
-        `Imported ${parse.rows.length} ${source} shifts. ${matched} matched existing staff, ${created} new staff created` +
+        `Imported ${toImport.length} ${source} shifts. ${matched} matched existing staff, ${created} new staff created` +
           (done.unmatched > 0
             ? `, ${done.unmatched} shifts could not be matched to anyone (see the warning on the sheet).`
             : "."),
       );
-      toast.success("Shifts imported.");
+      toast.success(`Shifts imported. ${done.unmatched} unmatched.`);
+      if (done.unmatched === 0) onComplete();
     } catch (err) {
       toast.error(errorMessage(err, "Import failed."));
     } finally {
+      running.current = false;
       setBusy(false);
       setProgress("");
     }
@@ -317,11 +382,11 @@ function ShiftImport({
           ) : null}
           {parse.rows.length > 0 && parse.layout === "tabs" ? (
             <Notice tone="info">
-              Read from the <strong className="text-foreground">{parse.sheetName}</strong> tab
-              (RSS / ESS company sheet layout). Its ID column is treated as the{" "}
+              Read from the <strong className="text-foreground">{parse.sheetName}</strong> tab (RSS
+              / ESS company sheet layout). Its ID column is treated as the{" "}
               <strong className="text-foreground">{source} ID</strong>, and hours are the Clock
-              In/Clock Out hours. Shifts are added to <strong className="text-foreground">{source}</strong>{" "}
-              for each person.
+              In/Clock Out hours. Shifts are added to{" "}
+              <strong className="text-foreground">{source}</strong> for each person.
             </Notice>
           ) : null}
           {parse.warnings.map((w) => (
@@ -350,7 +415,13 @@ function ShiftImport({
           {outside > 0 ? (
             <Notice tone="warn">
               {outside} of {parse.rows.length} shifts are dated outside {formatMonthLabel(month)}.
-              Check you picked the right month.
+              {onlyMonth
+                ? ` They will NOT be imported: ${toImport.length} shifts · ${importHours} hours will be.`
+                : " They WILL be imported and added to this month's hours and pay."}
+              <label className="mt-1 flex items-center gap-2">
+                <Checkbox checked={onlyMonth} onCheckedChange={(v) => setOnlyMonth(v === true)} />
+                <span>Only import shifts dated in {formatMonthLabel(month)} (recommended)</span>
+              </label>
             </Notice>
           ) : null}
           {parse.skipped > 0 ? (
@@ -380,7 +451,7 @@ function ShiftImport({
       {result ? <Notice tone="ok">{result}</Notice> : null}
       <div className="flex items-center justify-end gap-3">
         {progress ? <span className="text-[12px] text-muted-foreground">{progress}</span> : null}
-        <Button onClick={run} disabled={busy || !parse || parse.rows.length === 0}>
+        <Button onClick={run} disabled={busy || !parse || toImport.length === 0}>
           {busy ? "Working…" : "Import shifts"}
         </Button>
       </div>
@@ -407,7 +478,12 @@ function guessColumn(headers: string[], patterns: RegExp[]) {
   return NONE;
 }
 
-function PayrollImport({ periodId, companies }: { periodId: string; companies: PayrollCompany[] }) {
+function PayrollImport({
+  periodId,
+  companies,
+  onComplete,
+  onBusyChange,
+}: { periodId: string; companies: PayrollCompany[] } & CompletionProps) {
   const refresh = useRefreshSalary();
   const [companyId, setCompanyId] = useState("");
   const [table, setTable] = useState<TableParse | null>(null);
@@ -418,6 +494,16 @@ function PayrollImport({ periodId, companies }: { periodId: string; companies: P
   const [taxCol, setTaxCol] = useState(NONE);
   const [mode, setMode] = useState<"replace" | "add">("replace");
   const [busy, setBusy] = useState(false);
+  const running = useRef(false);
+  const upload = useRef({ key: "", id: "" });
+  const uploadIdFor = (key: string) => {
+    if (upload.current.key !== key) upload.current = { key, id: crypto.randomUUID() };
+    return upload.current.id;
+  };
+  useEffect(() => {
+    onBusyChange(busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
   const [result, setResult] = useState<{ text: string; notFound: string[] } | null>(null);
 
   const guessKey = (headers: string[], kind: KeyKind) =>
@@ -471,12 +557,21 @@ function PayrollImport({ periodId, companies }: { periodId: string; companies: P
   const company = companies.find((c) => c.id === companyId);
 
   async function run() {
-    if (!companyId || rows.length === 0) return;
+    if (!companyId || rows.length === 0 || running.current) return;
+    running.current = true;
     setBusy(true);
     setResult(null);
     try {
       const r = await importPayrollAmounts({
-        data: { periodId, companyId, keyKind, mode, rows, fileName },
+        data: {
+          periodId,
+          companyId,
+          keyKind,
+          mode,
+          rows,
+          fileName,
+          uploadId: uploadIdFor(JSON.stringify([periodId, companyId, keyKind, mode, rows])),
+        },
       });
       await refresh();
       setResult({
@@ -486,9 +581,11 @@ function PayrollImport({ periodId, companies }: { periodId: string; companies: P
         notFound: r.notFound,
       });
       toast.success("Payroll amounts imported.");
+      if (r.notFoundCount === 0) onComplete();
     } catch (err) {
       toast.error(errorMessage(err, "Import failed."));
     } finally {
+      running.current = false;
       setBusy(false);
     }
   }
@@ -621,11 +718,27 @@ function PayrollImport({ periodId, companies }: { periodId: string; companies: P
 
 /* --------------------------- 3) Excel salary sheet --------------------------- */
 
-function MasterImport({ periodId, initialFile, onWrongTab }: { periodId: string } & TabProps) {
+function MasterImport({
+  periodId,
+  initialFile,
+  onWrongTab,
+  onComplete,
+  onBusyChange,
+}: { periodId: string } & TabProps) {
   const refresh = useRefreshSalary();
   const [parse, setParse] = useState<MasterParse | null>(null);
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
+  const running = useRef(false);
+  const upload = useRef({ key: "", id: "" });
+  const uploadIdFor = (key: string) => {
+    if (upload.current.key !== key) upload.current = { key, id: crypto.randomUUID() };
+    return upload.current.id;
+  };
+  useEffect(() => {
+    onBusyChange(busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
   const [result, setResult] = useState<string | null>(null);
 
   async function onFile(file: File | undefined) {
@@ -650,6 +763,7 @@ function MasterImport({ periodId, initialFile, onWrongTab }: { periodId: string 
     } catch (err) {
       toast.error(errorMessage(err, "Could not read that file."));
     } finally {
+      running.current = false;
       setBusy(false);
     }
   }
@@ -700,7 +814,8 @@ function MasterImport({ periodId, initialFile, onWrongTab }: { periodId: string 
   }, [parse]);
 
   async function run() {
-    if (!parse || parse.rows.length === 0) return;
+    if (!parse || parse.rows.length === 0 || running.current) return;
+    running.current = true;
     setBusy(true);
     setResult(null);
     try {
@@ -716,12 +831,22 @@ function MasterImport({ periodId, initialFile, onWrongTab }: { periodId: string 
           void _ignored;
           return rest;
         });
-        const r = await importMasterSheet({ data: { periodId, rows: part, fileName } });
+        const r = await importMasterSheet({
+          data: {
+            periodId,
+            rows: part,
+            fileName,
+            uploadId: uploadIdFor(JSON.stringify([periodId, parse.rows])),
+            chunkIndex: i / SIZE,
+            totalChunks: Math.ceil(parse.rows.length / SIZE),
+          },
+        });
         lines += r.lines;
         newStaff += r.newStaff;
         existing += r.existingStaff;
         skipped += r.skipped;
         payments += r.payments;
+        if (r.complete) break;
       }
       await refresh();
       setResult(
@@ -729,9 +854,11 @@ function MasterImport({ periodId, initialFile, onWrongTab }: { periodId: string 
           (skipped ? ` ${skipped} duplicate/blank rows skipped.` : ""),
       );
       toast.success("Excel salary sheet imported.");
+      onComplete();
     } catch (err) {
       toast.error(errorMessage(err, "Import failed."));
     } finally {
+      running.current = false;
       setBusy(false);
     }
   }
@@ -798,7 +925,7 @@ const DETAILS_CHUNK = 200;
  * It never overwrites a value, never creates staff, and shows a preview
  * (matched / not matched / fields that would be filled) before anything is saved.
  */
-function DetailsImport({ initialFile, onWrongTab }: TabProps) {
+function DetailsImport({ initialFile, onWrongTab, onComplete, onBusyChange }: TabProps) {
   const refresh = useRefreshSalary();
   const { can } = usePermissions();
   const canEditStaff = can("staff", "edit");
@@ -806,6 +933,16 @@ function DetailsImport({ initialFile, onWrongTab }: TabProps) {
   const [parse, setParse] = useState<StaffDetailsParse | null>(null);
   const [preview, setPreview] = useState<StaffDetailsImportRow[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const running = useRef(false);
+  const upload = useRef({ key: "", id: "" });
+  const uploadIdFor = (key: string) => {
+    if (upload.current.key !== key) upload.current = { key, id: crypto.randomUUID() };
+    return upload.current.id;
+  };
+  useEffect(() => {
+    onBusyChange(busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState<string | null>(null);
 
@@ -858,13 +995,15 @@ function DetailsImport({ initialFile, onWrongTab }: TabProps) {
     } catch (err) {
       toast.error(errorMessage(err, "Could not read that file."));
     } finally {
+      running.current = false;
       setBusy(false);
       setProgress("");
     }
   }
 
   async function save() {
-    if (!parse || parse.rows.length === 0) return;
+    if (!parse || parse.rows.length === 0 || running.current) return;
+    running.current = true;
     setBusy(true);
     try {
       const done = await send(parse.rows, true);
@@ -875,9 +1014,11 @@ function DetailsImport({ initialFile, onWrongTab }: TabProps) {
       setParse(null);
       setResult(`Filled ${fields} empty fields on ${staff} staff. Nothing was overwritten.`);
       toast.success("Employee details saved.");
+      if (done.every((r) => r.status === "matched")) onComplete();
     } catch (err) {
       toast.error(errorMessage(err, "Import failed."));
     } finally {
+      running.current = false;
       setBusy(false);
       setProgress("");
     }

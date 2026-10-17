@@ -8,7 +8,9 @@ export function Panel({ children, className }: { children: ReactNode; className?
   // below), which would trap it inside this panel instead of letting it
   // stick to the viewport. Rounded corners are clipped further down
   // instead (PanelHeader's own rounded-t-lg, TableWrap's rounded-b-lg).
-  return <section className={cn("panel rounded-lg", className)}>{children}</section>;
+  return (
+    <section className={cn("panel min-w-0 max-w-full rounded-xl", className)}>{children}</section>
+  );
 }
 
 export function PanelHeader({
@@ -21,17 +23,26 @@ export function PanelHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-t-lg border-b border-border bg-gradient-to-b from-surface-muted/70 to-surface-muted/40 px-4 py-3">
+    <header className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-t-xl border-b border-white/[0.07] bg-white/[0.03] px-4 py-2.5">
       <div className="min-w-0">
-        <h2 className="truncate text-[13px] font-semibold text-foreground">{title}</h2>
+        <h2 className="break-words text-[13.5px] font-semibold text-foreground">{title}</h2>
         {description ? <p className="mt-0.5 text-xs text-muted-foreground">{description}</p> : null}
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex min-w-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
   );
 }
 
-export function EmptyState({ title, description }: { title: string; description?: string }) {
+export function EmptyState({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description?: string;
+  /** A button that does the obvious next thing (for example "Upload first timesheet"). */
+  action?: ReactNode;
+}) {
   return (
     <div className="flex min-h-44 flex-col items-center justify-center border-t border-dashed border-border px-6 py-12 text-center">
       <span className="mb-3 flex size-8 items-center justify-center rounded-full bg-muted">
@@ -41,6 +52,7 @@ export function EmptyState({ title, description }: { title: string; description?
       {description ? (
         <p className="mt-1 max-w-sm text-xs text-muted-foreground">{description}</p>
       ) : null}
+      {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
 }
@@ -97,13 +109,13 @@ export function TableWrap({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="w-full">
+    <div className="min-w-0 max-w-full w-full">
       <div
         ref={topRef}
         onScroll={onTopScroll}
         className={cn(
           "w-full overflow-x-auto overscroll-x-contain",
-          !needsScroll && "rounded-b-lg",
+          !needsScroll && "rounded-b-xl",
         )}
       >
         {children}
@@ -113,7 +125,7 @@ export function TableWrap({ children }: { children: ReactNode }) {
           ref={bottomRef}
           onScroll={onBottomScroll}
           aria-hidden="true"
-          className="sticky bottom-0 z-20 w-full overflow-x-auto overscroll-x-contain rounded-b-lg border-t border-border bg-surface [&::-webkit-scrollbar]:h-2.5"
+          className="sticky bottom-0 z-20 w-full overflow-x-auto overscroll-x-contain rounded-b-xl border-t border-border bg-white/[0.04] backdrop-blur [&::-webkit-scrollbar]:h-2.5"
         >
           <div style={{ width: scrollWidth, height: 1 }} />
         </div>

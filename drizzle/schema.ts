@@ -171,58 +171,65 @@ export const clients = pgTable("clients", {
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
-export const invoices = pgTable("invoices", {
-  id: text("id").primaryKey(),
-  number: text("number").notNull(),
-  clientId: text("client_id")
-    .notNull()
-    .references(() => clients.id, { onDelete: "cascade" }),
-  month: text("month"), // yyyy-mm
-  invoiceDate: text("invoice_date").notNull(), // yyyy-mm-dd
-  dueDate: text("due_date").notNull(), // yyyy-mm-dd
-  poReference: text("po_reference"),
-  // Optional "who this was really billed for" — used when one client record
-  // (e.g. a management/agency account) carries invoices for several end
-  // clients. Plain nullable text: existing rows stay NULL (= unassigned) and
-  // are never modified.
-  endClient: text("end_client"),
-  description: text("description").notNull().default(""),
-  // Optional second description line (printed under the main description).
-  description2: text("description_2"),
-  amountExVat: money("amount_ex_vat").notNull(),
-  // Only set when the invoice was billed as Hours × Rate instead of a fixed
-  // amount. `amountExVat` above always holds the final total either way.
-  hours: numeric("hours", { precision: 10, scale: 2, mode: "number" }),
-  rate: money("rate"),
-  // Payroll split: of `hours`, this many were paid through payroll at
-  // `payrollRate` (no VAT). The remaining hours use `rate`. NULL = no split.
-  payrollHours: numeric("payroll_hours", { precision: 10, scale: 2, mode: "number" }),
-  payrollRate: money("payroll_rate"),
-  vatIncluded: boolean("vat_included").notNull().default(false),
-  vatRate: numeric("vat_rate", { precision: 5, scale: 2, mode: "number" }).notNull().default(20),
-  paymentTerms: text("payment_terms").notNull().default(""),
-  notes: text("notes"),
-  // Approval status — deliberately separate from payment status (see below).
-  approved: boolean("approved").notNull().default(false),
-  // 'full' (default) applies VAT to the whole amountExVat, unchanged from
-  // prior behaviour. 'remaining' applies VAT only to the currently
-  // outstanding ex-VAT balance, never retroactively to amounts already paid.
-  vatMode: text("vat_mode").notNull().default("full"),
-  // Only used when vatMode = 'remaining': the ex-VAT amount that had already
-  // been paid (e.g. a payroll payment) at the moment VAT was applied. VAT is
-  // charged on (amountExVat - vatPaidBefore) and that base is FROZEN — payments
-  // recorded afterwards never shrink it. Null = legacy row (falls back to the
-  // old "paid so far" behaviour).
-  vatPaidBefore: money("vat_paid_before"),
-  // Set when this invoice is an "Additional Invoice" against an original —
-  // a separate, independently-tracked invoice that references but never
-  // modifies the original. Several additional invoices may share one.
-  originalInvoiceId: text("original_invoice_id").references((): AnyPgColumn => invoices.id, {
-    onDelete: "set null",
-  }),
-  // See companies.deletedAt above — same recycle-bin pattern.
-  deletedAt: timestamp("deleted_at", { withTimezone: true }),
-});
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: text("id").primaryKey(),
+    number: text("number").notNull(),
+    billingScope: text("billing_scope"),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    month: text("month"), // yyyy-mm
+    invoiceDate: text("invoice_date").notNull(), // yyyy-mm-dd
+    dueDate: text("due_date").notNull(), // yyyy-mm-dd
+    poReference: text("po_reference"),
+    // Optional "who this was really billed for" — used when one client record
+    // (e.g. a management/agency account) carries invoices for several end
+    // clients. Plain nullable text: existing rows stay NULL (= unassigned) and
+    // are never modified.
+    endClient: text("end_client"),
+    description: text("description").notNull().default(""),
+    // Optional second description line (printed under the main description).
+    description2: text("description_2"),
+    amountExVat: money("amount_ex_vat").notNull(),
+    // Only set when the invoice was billed as Hours × Rate instead of a fixed
+    // amount. `amountExVat` above always holds the final total either way.
+    hours: numeric("hours", { precision: 10, scale: 2, mode: "number" }),
+    rate: money("rate"),
+    // Payroll split: of `hours`, this many were paid through payroll at
+    // `payrollRate` (no VAT). The remaining hours use `rate`. NULL = no split.
+    payrollHours: numeric("payroll_hours", { precision: 10, scale: 2, mode: "number" }),
+    payrollRate: money("payroll_rate"),
+    vatIncluded: boolean("vat_included").notNull().default(false),
+    vatRate: numeric("vat_rate", { precision: 5, scale: 2, mode: "number" }).notNull().default(20),
+    paymentTerms: text("payment_terms").notNull().default(""),
+    notes: text("notes"),
+    // Approval status — deliberately separate from payment status (see below).
+    approved: boolean("approved").notNull().default(false),
+    // 'full' (default) applies VAT to the whole amountExVat, unchanged from
+    // prior behaviour. 'remaining' applies VAT only to the currently
+    // outstanding ex-VAT balance, never retroactively to amounts already paid.
+    vatMode: text("vat_mode").notNull().default("full"),
+    // Only used when vatMode = 'remaining': the ex-VAT amount that had already
+    // been paid (e.g. a payroll payment) at the moment VAT was applied. VAT is
+    // charged on (amountExVat - vatPaidBefore) and that base is FROZEN — payments
+    // recorded afterwards never shrink it. Null = legacy row (falls back to the
+    // old "paid so far" behaviour).
+    vatPaidBefore: money("vat_paid_before"),
+    // Set when this invoice is an "Additional Invoice" against an original —
+    // a separate, independently-tracked invoice that references but never
+    // modifies the original. Several additional invoices may share one.
+    originalInvoiceId: text("original_invoice_id").references((): AnyPgColumn => invoices.id, {
+      onDelete: "set null",
+    }),
+    // See companies.deletedAt above — same recycle-bin pattern.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("invoices_scope_number_uq").on(t.billingScope, sql`lower(btrim(${t.number}))`),
+  ],
+);
 
 export const invoiceLineItems = pgTable("invoice_line_items", {
   id: text("id").primaryKey(),
@@ -547,6 +554,9 @@ export const payrollLines = pgTable(
     comment: text("comment").notNull().default(""),
     rate: numeric("rate", { precision: 10, scale: 2, mode: "number" }).notNull().default(0),
     // NULL = Amount is Rate x Total Hours. Set = fixed monthly pay (guards not paid by hours).
+    uniformCost: numeric("uniform_cost", { precision: 10, scale: 2, mode: "number" })
+      .notNull()
+      .default(0),
     fixedAmount: numeric("fixed_amount", { precision: 10, scale: 2, mode: "number" }),
     // NULL = holiday entitlement is information only. Set = those hours are paid at this rate.
     holidayRate: numeric("holiday_rate", { precision: 10, scale: 2, mode: "number" }),
@@ -662,3 +672,218 @@ export const staffTrash = pgTable(
   },
   (t) => [index("staff_trash_staff_idx").on(t.staffId)],
 );
+
+// Timesheet Check: sheets that staff send, and the comparison of each row with our own
+// shift records. Created by schema/timesheets-migration.sql (run it BEFORE deploying).
+export const timesheetSheets = pgTable(
+  "timesheet_sheets",
+  {
+    id: text("id").primaryKey(),
+    month: text("month").notNull(), // yyyy-mm
+    fileName: text("file_name").notNull(),
+    sheetLabel: text("sheet_label").notNull().default(""),
+    fileHash: text("file_hash").notNull(),
+    format: text("format").notNull().default("excel"), // excel | pdf | photo
+    uploadedBy: text("uploaded_by").notNull().default(""),
+    uploadedByName: text("uploaded_by_name").notNull().default(""),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    staffId: text("staff_id").references(() => payrollStaff.id, { onDelete: "set null" }),
+    matchedBy: text("matched_by").notNull().default("none"), // ni | name | none
+    staffConfirmedAt: timestamp("staff_confirmed_at", { withTimezone: true }),
+    personName: text("person_name").notNull().default(""),
+    personNi: text("person_ni").notNull().default(""),
+    personDob: text("person_dob").notNull().default(""),
+    personKey: text("person_key").notNull(),
+    statedHours: numeric("stated_hours", { precision: 10, scale: 2, mode: "number" }),
+    sheetHours: numeric("sheet_hours", { precision: 10, scale: 2, mode: "number" })
+      .notNull()
+      .default(0),
+    recordHours: numeric("record_hours", { precision: 10, scale: 2, mode: "number" })
+      .notNull()
+      .default(0),
+    rowCount: integer("row_count").notNull().default(0),
+    issueCount: integer("issue_count").notNull().default(0),
+    status: text("status").notNull().default("needs_review"), // ready | needs_review | staff_not_found
+    readNote: text("read_note"),
+    comparedAt: timestamp("compared_at", { withTimezone: true }),
+    /** An approver accepted that the sheet's stated total differs from its rows. */
+    statedAcceptedNote: text("stated_accepted_note").notNull().default(""),
+    statedAcceptedKey: text("stated_accepted_key").notNull().default(""),
+    statedAcceptedByName: text("stated_accepted_by_name").notNull().default(""),
+    statedAcceptedAt: timestamp("stated_accepted_at", { withTimezone: true }),
+    /** Pay for this sheet (actual hours x rate). null = not calculated yet ("Check again"). */
+    payHours: numeric("pay_hours", { precision: 10, scale: 2, mode: "number" }),
+    payAmount: money("pay_amount"),
+    /** Sheet hours minus record hours on rows that are NOT accepted. null = not calculated yet. */
+    openDiff: numeric("open_diff", { precision: 10, scale: 2, mode: "number" }),
+  },
+  (t) => [
+    // Several sheets per person per month are allowed (see timesheet-multi-sheet-migration.sql).
+    index("timesheet_sheets_person_month_idx").on(t.personKey, t.month),
+    uniqueIndex("timesheet_sheets_file_uq").on(t.fileHash, t.sheetLabel),
+    index("timesheet_sheets_month_idx").on(t.month, t.uploadedAt),
+    index("timesheet_sheets_staff_idx").on(t.staffId),
+  ],
+);
+
+export const timesheetRows = pgTable(
+  "timesheet_rows",
+  {
+    id: text("id").primaryKey(),
+    sheetId: text("sheet_id")
+      .notNull()
+      .references(() => timesheetSheets.id, { onDelete: "cascade" }),
+    lineNo: integer("line_no").notNull().default(0),
+    /** true = a shift from OUR records that is missing on the sheet. */
+    fromRecords: boolean("from_records").notNull().default(false),
+    date: text("date").notNull().default(""),
+    site: text("site").notNull().default(""),
+    siteAlt: text("site_alt").notNull().default(""),
+    startTime: text("start_time").notNull().default(""),
+    endTime: text("end_time").notNull().default(""),
+    sheetHours: numeric("sheet_hours", { precision: 10, scale: 2, mode: "number" }),
+    rate: money("rate"),
+    amount: money("amount"),
+    expense: money("expense"),
+    uncertain: boolean("uncertain").notNull().default(false),
+    parseNote: text("parse_note").notNull().default(""),
+    recordHours: numeric("record_hours", { precision: 10, scale: 2, mode: "number" }),
+    result: text("result").notNull().default("check_reading"),
+    note: text("note").notNull().default(""),
+    /** An approver accepted this difference; the reason is kept (empty = not accepted). */
+    acceptedNote: text("accepted_note").notNull().default(""),
+    acceptedByName: text("accepted_by_name").notNull().default(""),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    /** The hours the approver said were really worked (null = old acceptance, or not accepted). */
+    acceptedHours: numeric("accepted_hours", { precision: 10, scale: 2, mode: "number" }),
+    /** What this row is paid: pay hours x pay rate. null = not calculated yet. */
+    payRate: money("pay_rate"),
+    payHours: numeric("pay_hours", { precision: 10, scale: 2, mode: "number" }),
+    payAmount: money("pay_amount"),
+    /** The salary shift (salary_shifts.id) this row is paired with; an edit updates it. */
+    recordShiftId: text("record_shift_id"),
+    /** A person's own correction of this row (null = not edited). It wins over everything else. */
+    editHours: numeric("edit_hours", { precision: 10, scale: 2, mode: "number" }),
+    editRate: money("edit_rate"),
+    editNote: text("edit_note").notNull().default(""),
+    editedByName: text("edited_by_name").notNull().default(""),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+  },
+  (t) => [index("timesheet_rows_sheet_idx").on(t.sheetId, t.lineNo)],
+);
+
+/**
+ * "Accept with a note": an approver reviewed one difference and decided it is fine (e.g. the
+ * staff member gave a reason, so no pay is deducted). `rowKey` fingerprints the difference
+ * (kind + date + site + the two hour figures), so if the sheet or our records change the
+ * fingerprint changes and the acceptance lapses by itself.
+ */
+export const timesheetAcceptances = pgTable(
+  "timesheet_acceptances",
+  {
+    id: text("id").primaryKey(),
+    staffId: text("staff_id")
+      .notNull()
+      .references(() => payrollStaff.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    rowKey: text("row_key").notNull(),
+    note: text("note").notNull(),
+    /** Hours really worked, as decided by the approver (null = accepted before this existed). */
+    actualHours: numeric("actual_hours", { precision: 10, scale: 2, mode: "number" }),
+    acceptedBy: text("accepted_by").notNull().default(""),
+    acceptedByName: text("accepted_by_name").notNull().default(""),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("timesheet_acceptances_uq").on(t.staffId, t.month, t.rowKey)],
+);
+
+// Tasks: free-text tasks that an admin gives out (or anyone logs for themselves), with an
+// activity history per task. Created by schema/tasks-migration.sql (run it BEFORE deploying).
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: text("id").primaryKey(),
+    text: text("text").notNull(),
+    notes: text("notes").notNull().default(""),
+    assigneeId: text("assignee_id").references(() => users.id, { onDelete: "set null" }),
+    assigneeName: text("assignee_name").notNull().default(""),
+    createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+    createdByName: text("created_by_name").notNull().default(""),
+    date: text("date").notNull(), // yyyy-mm-dd, the day the task is for
+    status: text("status").notNull().default("todo"), // todo | in_progress | completed | verified
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("tasks_assignee_idx").on(t.assigneeId, t.status, t.date),
+    index("tasks_date_idx").on(t.date),
+    index("tasks_status_idx").on(t.status, t.date),
+  ],
+);
+
+export const taskEvents = pgTable(
+  "task_events",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    byName: text("by_name").notNull().default(""),
+    text: text("text").notNull(),
+  },
+  (t) => [index("task_events_task_idx").on(t.taskId, t.at)],
+);
+
+// Invoice Drafts: links a client name from the shift export to a client, and records which
+// client + month already became an invoice. Created by schema/invoice-drafts-migration.sql
+// (run it BEFORE deploying).
+export const invoiceDraftAliases = pgTable("invoice_draft_aliases", {
+  nameKey: text("name_key").primaryKey(),
+  shiftName: text("shift_name").notNull(),
+  clientId: text("client_id")
+    .notNull()
+    .references(() => clients.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invoiceDraftRuns = pgTable(
+  "invoice_draft_runs",
+  {
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    month: text("month").notNull(), // yyyy-mm
+    invoiceId: text("invoice_id").references(() => invoices.id, { onDelete: "set null" }),
+    createdByName: text("created_by_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("invoice_draft_runs_pk").on(t.clientId, t.month)],
+);
+
+// Follow-ups: every chase of an overdue client, and where each client stands (next chase,
+// promised date). Created by schema/follow-ups-migration.sql (run it BEFORE deploying).
+export const followUpContacts = pgTable(
+  "follow_up_contacts",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    method: text("method").notNull(),
+    note: text("note").notNull(),
+    byId: text("by_id").references(() => users.id, { onDelete: "set null" }),
+    byName: text("by_name").notNull().default(""),
+  },
+  (t) => [index("follow_up_contacts_client_idx").on(t.clientId, t.at)],
+);
+
+export const followUpState = pgTable("follow_up_state", {
+  clientId: text("client_id")
+    .primaryKey()
+    .references(() => clients.id, { onDelete: "cascade" }),
+  nextFollowUp: text("next_follow_up"),
+  promisedDate: text("promised_date"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

@@ -51,6 +51,18 @@ export interface ShiftChunkResult {
 }
 
 export async function importShiftRows(db: Db, data: ShiftChunkArgs): Promise<ShiftChunkResult> {
+  // Once an admin-approved Timesheet Check month is locked, the hours it was checked against
+  // must not change underneath it. Reopen the timesheet month first (admins only).
+  const locked = await db.execute(sql`
+    SELECT l.month FROM timesheet_month_locks l
+    JOIN salary_periods p ON p.month = l.month
+    WHERE l.locked AND p.id = ${data.periodId} LIMIT 1`);
+  const lockedMonth = (locked.rows[0] as { month?: string } | undefined)?.month;
+  if (lockedMonth)
+    throw new Error(
+      `The timesheet check for ${lockedMonth} is locked, so shifts for this month cannot be re-imported. Ask an admin to reopen the month in Timesheet Check first.`,
+    );
+
   if (data.reset) {
     // Zero the source columns of everyone previously fed by this source so
     // people missing from the corrected file don't keep stale amounts.
@@ -77,6 +89,8 @@ export async function importShiftRows(db: Db, data: ShiftChunkArgs): Promise<Shi
   // Lookup tables for matching: company ID first, then NI, then unique name.
   const staffRows = await db.select().from(payrollStaff);
   const byId = new Map<string, string>();
+  const ambiguousIds = new Set<string>();
+  const ambiguousNis = new Set<string>();
   const byNi = new Map<string, string>();
   const nameCount = new Map<string, number>();
   const byName = new Map<string, string>();
@@ -90,8 +104,15 @@ export async function importShiftRows(db: Db, data: ShiftChunkArgs): Promise<Shi
     name: string;
   }) => {
     const sid = staffIdFor(s, data.source);
-    if (sid) byId.set(sid, s.id);
-    if (s.ni) byNi.set(normNi(s.ni), s.id);
+    if (sid) {
+      if (byId.has(sid) && byId.get(sid) !== s.id) ambiguousIds.add(sid);
+      byId.set(sid, s.id);
+    }
+    if (s.ni) {
+      const ni = normNi(s.ni);
+      if (byNi.has(ni) && byNi.get(ni) !== s.id) ambiguousNis.add(ni);
+      byNi.set(ni, s.id);
+    }
     const n = normName(s.name);
     nameCount.set(n, (nameCount.get(n) ?? 0) + 1);
     byName.set(n, s.id);
@@ -106,8 +127,14 @@ export async function importShiftRows(db: Db, data: ShiftChunkArgs): Promise<Shi
   let created = 0;
   let unmatched = 0;
 
-  const shiftValues = data.rows.map((r) => {
+  const shiftValues = data.rows.map((r, rowIndex) => {
+    // Say WHICH row and WHO, so one bad row can be found and fixed in the file.
+    const where = `Row ${rowIndex + 2}${r.employeeName ? ` (${r.employeeName}` : " ("}${r.employeeId ? `, ID ${r.employeeId}` : ""}${r.ni ? `, NI ${formatNi(r.ni)}` : ""})`;
     let staffId: string | null = null;
+    if (ambiguousIds.has(r.employeeId) || ambiguousNis.has(normNi(r.ni)))
+      throw new Error(
+        `${where}: this staff ID or NI belongs to more than one staff record. Fix the duplicate in Staff, then import again.`,
+      );
     if (r.employeeId && byId.has(r.employeeId)) staffId = byId.get(r.employeeId) ?? null;
     else if (r.ni && byNi.has(normNi(r.ni))) staffId = byNi.get(normNi(r.ni)) ?? null;
     else if (r.employeeName && nameCount.get(normName(r.employeeName)) === 1) {
@@ -118,6 +145,21 @@ export async function importShiftRows(db: Db, data: ShiftChunkArgs): Promise<Shi
       if (cand && !(candNi && rowNi && candNi !== rowNi)) staffId = cand;
     }
 
+    if (staffId) {
+      const found = have.get(staffId);
+      if (
+        found &&
+        ((normNi(found.ni) && normNi(r.ni) && normNi(found.ni) !== normNi(r.ni)) ||
+          (found.sid && r.employeeId && found.sid !== r.employeeId))
+      )
+        throw new Error(
+          `${where}: the staff ID and the NI point to different people (Staff has "${found.sid || "no ID"}" / "${found.ni || "no NI"}"). Correct the ID or NI in the file or in Staff.`,
+        );
+    }
+    if (!staffId && nameCount.get(normName(r.employeeName))! > 1)
+      throw new Error(
+        `${where}: more than one staff record has this name. Add this person's ID or NI to the file (or to Staff) so they can be told apart.`,
+      );
     if (!staffId && data.createMissingStaff && (r.employeeId || r.employeeName)) {
       const id = uid("st");
       const fresh = {

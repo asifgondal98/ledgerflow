@@ -1,4 +1,5 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { recheckSheet } from "./timesheetCheck";
 import { db } from "./db";
 import {
   payrollCompanies,
@@ -11,6 +12,7 @@ import {
   salaryPeriods,
   salaryShifts,
   staffTrash,
+  timesheetSheets,
 } from "../../../drizzle/schema";
 import { uid } from "./id";
 import { normNi } from "../payroll/calc";
@@ -58,6 +60,8 @@ interface Bundle {
   shiftsByStaff: Map<string, string[]>;
   /** Staff who have a line in a CLOSED salary month / payroll sheet — never deleted. */
   blocked: Map<string, string>;
+  /** How many Timesheet Check sheets each person has. */
+  timesheetsByStaff: Map<string, number>;
 }
 
 /** Loads one person-group's profile and everything the database would cascade away. */
@@ -71,6 +75,7 @@ async function collect(ids: string[]): Promise<Bundle> {
     entries: [],
     payments: [],
     shiftsByStaff: new Map(),
+    timesheetsByStaff: new Map(),
     blocked: new Map(),
   };
   if (staffIds.length === 0) return empty;
@@ -90,7 +95,9 @@ async function collect(ids: string[]): Promise<Bundle> {
     entries.map((e) => e.id),
     500,
   )) {
-    payments.push(...(await db.select().from(salaryPayments).where(inArray(salaryPayments.entryId, part))));
+    payments.push(
+      ...(await db.select().from(salaryPayments).where(inArray(salaryPayments.entryId, part))),
+    );
   }
 
   const shiftsByStaff = new Map<string, string[]>();
@@ -131,7 +138,33 @@ async function collect(ids: string[]): Promise<Bundle> {
     if (month && !blocked.has(l.staffId)) blocked.set(l.staffId, `closed payroll sheet ${month}`);
   }
 
-  return { staff, links, lines, entries, payments, shiftsByStaff, blocked };
+  // Timesheet Check: deleting the person un-links their sheets, which a locked timesheet
+  // month forbids. Say so up front instead of failing in the database.
+  const timesheetsByStaff = new Map<string, number>();
+  const sheetMonths = new Map<string, string[]>();
+  for (const part of chunk(staffIds, 500)) {
+    const rows = await db
+      .select({ staffId: timesheetSheets.staffId, month: timesheetSheets.month })
+      .from(timesheetSheets)
+      .where(inArray(timesheetSheets.staffId, part));
+    for (const r of rows) {
+      if (!r.staffId) continue;
+      timesheetsByStaff.set(r.staffId, (timesheetsByStaff.get(r.staffId) ?? 0) + 1);
+      const list = sheetMonths.get(r.staffId) ?? [];
+      list.push(r.month);
+      sheetMonths.set(r.staffId, list);
+    }
+  }
+  if (sheetMonths.size > 0) {
+    const lockRes = await db.execute(sql`SELECT month FROM timesheet_month_locks WHERE locked`);
+    const lockedMonths = new Set((lockRes.rows as { month: string }[]).map((r) => r.month));
+    for (const [id, months] of sheetMonths) {
+      const hit = months.find((m) => lockedMonths.has(m));
+      if (hit && !blocked.has(id)) blocked.set(id, `locked timesheet month ${hit}`);
+    }
+  }
+
+  return { staff, links, lines, entries, payments, shiftsByStaff, blocked, timesheetsByStaff };
 }
 
 export interface StaffDeleteImpact {
@@ -140,6 +173,8 @@ export interface StaffDeleteImpact {
   payrollLines: number;
   payments: number;
   shifts: number;
+  /** Timesheet Check sheets that would lose their staff link (kept, shown as "staff not found"). */
+  timesheets: number;
   /** How many of the chosen staff can't be deleted (they sit in a closed month). */
   blocked: number;
   blockedNames: string[];
@@ -153,6 +188,7 @@ export async function staffDeleteImpact(ids: string[]): Promise<StaffDeleteImpac
     payrollLines: 0,
     payments: 0,
     shifts: 0,
+    timesheets: 0,
     blocked: 0,
     blockedNames: [],
   };
@@ -161,11 +197,13 @@ export async function staffDeleteImpact(ids: string[]): Promise<StaffDeleteImpac
     for (const s of b.staff) {
       if (b.blocked.has(s.id)) {
         out.blocked += 1;
-        if (out.blockedNames.length < 5) out.blockedNames.push(`${s.name} (${b.blocked.get(s.id)})`);
+        if (out.blockedNames.length < 5)
+          out.blockedNames.push(`${s.name} (${b.blocked.get(s.id)})`);
         continue;
       }
       out.staff += 1;
       out.shifts += b.shiftsByStaff.get(s.id)?.length ?? 0;
+      out.timesheets += b.timesheetsByStaff.get(s.id) ?? 0;
     }
     const ok = new Set(b.staff.filter((s) => !b.blocked.has(s.id)).map((s) => s.id));
     out.salaryLines += b.entries.filter((e) => ok.has(e.staffId)).length;
@@ -186,7 +224,10 @@ export interface MoveToTrashResult {
  * Snapshot first, delete second. If the delete fails the snapshot is removed
  * again, so a failure never leaves a ghost entry behind.
  */
-export async function moveStaffToTrash(ids: string[], deletedBy: string): Promise<MoveToTrashResult> {
+export async function moveStaffToTrash(
+  ids: string[],
+  deletedBy: string,
+): Promise<MoveToTrashResult> {
   const result: MoveToTrashResult = { deleted: 0, skipped: 0, skippedNames: [] };
   for (const part of chunk([...new Set(ids)], 20)) {
     const b = await collect(part);
@@ -212,7 +253,7 @@ export async function moveStaffToTrash(ids: string[], deletedBy: string): Promis
         salaryPayments: b.payments.filter((p) => entryIds.has(p.entryId)),
         shiftIds: b.shiftsByStaff.get(s.id) ?? [],
       };
-      return { id: uid("stt"), staffId: s.id, name: s.name, deletedBy, snapshot };
+      return { id: uid("stt"), staffId: s.id, name: s.name, deletedBy, snapshot: { ...snapshot } };
     });
 
     await db.insert(staffTrash).values(rows);
@@ -238,7 +279,9 @@ export async function moveStaffToTrash(ids: string[], deletedBy: string): Promis
 }
 
 /** Puts a deleted person (and whatever of their history still has a home) back. */
-export async function restoreStaffFromTrash(trashId: string): Promise<{ name: string; note: string }> {
+export async function restoreStaffFromTrash(
+  trashId: string,
+): Promise<{ name: string; note: string }> {
   const [row] = await db.select().from(staffTrash).where(eq(staffTrash.id, trashId)).limit(1);
   if (!row) throw new Error("This item is no longer in the recycle bin.");
   const snap = row.snapshot as unknown as StaffTrashSnapshot;
@@ -251,9 +294,16 @@ export async function restoreStaffFromTrash(trashId: string): Promise<{ name: st
   }
   // Same rule as adding a person by hand: one RSS ID / ESS ID / NI per person.
   for (const c of current) {
-    if (s.rssId && c.rssId === s.rssId) throw new Error(`RSS ID ${s.rssId} now belongs to ${c.name}. Fix or remove that profile first.`);
-    if (s.essId && c.essId === s.essId) throw new Error(`ESS ID ${s.essId} now belongs to ${c.name}. Fix or remove that profile first.`);
-    if (s.ni && normNi(c.ni) === normNi(s.ni)) throw new Error(`The NI number now belongs to ${c.name}. Fix or remove that profile first.`);
+    if (s.rssId && c.rssId === s.rssId)
+      throw new Error(
+        `RSS ID ${s.rssId} now belongs to ${c.name}. Fix or remove that profile first.`,
+      );
+    if (s.essId && c.essId === s.essId)
+      throw new Error(
+        `ESS ID ${s.essId} now belongs to ${c.name}. Fix or remove that profile first.`,
+      );
+    if (s.ni && normNi(c.ni) === normNi(s.ni))
+      throw new Error(`The NI number now belongs to ${c.name}. Fix or remove that profile first.`);
   }
 
   await db.insert(payrollStaff).values(s);
@@ -275,10 +325,14 @@ export async function restoreStaffFromTrash(trashId: string): Promise<{ name: st
     const entryIds = new Set(entries.map((e) => e.id));
     const payments = snap.salaryPayments.filter((p) => entryIds.has(p.entryId));
 
-    for (const part of chunk(links, 200)) await db.insert(payrollCompanyStaff).values(part).onConflictDoNothing();
-    for (const part of chunk(lines, 200)) await db.insert(payrollLines).values(part).onConflictDoNothing();
-    for (const part of chunk(entries, 200)) await db.insert(salaryEntries).values(part).onConflictDoNothing();
-    for (const part of chunk(payments, 200)) await db.insert(salaryPayments).values(part).onConflictDoNothing();
+    for (const part of chunk(links, 200))
+      await db.insert(payrollCompanyStaff).values(part).onConflictDoNothing();
+    for (const part of chunk(lines, 200))
+      await db.insert(payrollLines).values(part).onConflictDoNothing();
+    for (const part of chunk(entries, 200))
+      await db.insert(salaryEntries).values(part).onConflictDoNothing();
+    for (const part of chunk(payments, 200))
+      await db.insert(salaryPayments).values(part).onConflictDoNothing();
 
     // Re-link their imported shifts (only ones nobody else has claimed meanwhile).
     for (const part of chunk(snap.shiftIds, 500)) {
@@ -290,11 +344,41 @@ export async function restoreStaffFromTrash(trashId: string): Promise<{ name: st
 
     await db.delete(staffTrash).where(eq(staffTrash.id, row.id));
 
-    const lostLines = snap.salaryEntries.length - entries.length + (snap.payrollLines.length - lines.length);
-    const note =
-      lostLines > 0
-        ? `${lostLines} sheet line${lostLines === 1 ? "" : "s"} could not be restored because that month / sheet no longer exists.`
-        : "";
+    // Timesheet Check: sheets that lost this person when they were deleted find them again.
+    // Best effort: a locked month (or any hiccup) must never undo a successful restore.
+    let relinked = 0;
+    try {
+      if (s.ni) {
+        const orphan = await db
+          .select({ id: timesheetSheets.id, ni: timesheetSheets.personNi })
+          .from(timesheetSheets)
+          .where(isNull(timesheetSheets.staffId));
+        for (const sheet of orphan) {
+          if (normNi(sheet.ni) !== normNi(s.ni)) continue;
+          try {
+            const res = await recheckSheet(db, sheet.id);
+            if (res && res.status !== "staff_not_found") relinked++;
+          } catch {
+            /* locked month or similar: leave that sheet for a manual Check again */
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const lostLines =
+      snap.salaryEntries.length - entries.length + (snap.payrollLines.length - lines.length);
+    const parts: string[] = [];
+    if (lostLines > 0)
+      parts.push(
+        `${lostLines} sheet line${lostLines === 1 ? "" : "s"} could not be restored because that month / sheet no longer exists.`,
+      );
+    if (relinked > 0)
+      parts.push(
+        `${relinked} timesheet${relinked === 1 ? " was" : "s were"} linked back and checked again.`,
+      );
+    const note = parts.join(" ");
     return { name: s.name, note };
   } catch (err) {
     // Undo the partial restore (cascades away anything inserted above); the
@@ -306,7 +390,11 @@ export async function restoreStaffFromTrash(trashId: string): Promise<{ name: st
 
 /** Removes a recycle-bin entry for good. */
 export async function purgeStaffTrash(trashId: string): Promise<string> {
-  const [row] = await db.select({ name: staffTrash.name }).from(staffTrash).where(eq(staffTrash.id, trashId)).limit(1);
+  const [row] = await db
+    .select({ name: staffTrash.name })
+    .from(staffTrash)
+    .where(eq(staffTrash.id, trashId))
+    .limit(1);
   await db.delete(staffTrash).where(eq(staffTrash.id, trashId));
   return row?.name ?? "";
 }

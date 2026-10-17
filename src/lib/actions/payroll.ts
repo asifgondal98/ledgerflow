@@ -21,7 +21,13 @@ import { recordActivity, changedFieldsSummary } from "../server/activity";
 import { formatMonthLabel, formatNi, normName, normNi, round2 } from "../payroll/calc";
 import { lineTotals } from "../payroll/sheetCalc";
 import { STAFF_DETAIL_FIELDS } from "../payroll/types";
-import type { ContractStatus, PeriodStatus, Staff, StaffDetailField, StaffDetails } from "../payroll/types";
+import type {
+  ContractStatus,
+  PeriodStatus,
+  Staff,
+  StaffDetailField,
+  StaffDetails,
+} from "../payroll/types";
 import { cleanDetail } from "../payroll/sheetImport";
 import type { PayrollImportResult, PayrollImportRowResult } from "../payroll/sheetImport";
 import type {
@@ -56,6 +62,7 @@ const toLine = (r: typeof payrollLines.$inferSelect): PayrollLine => ({
   holidayEntitlement: r.holidayEntitlement,
   comment: r.comment,
   rate: r.rate,
+  uniformCost: r.uniformCost,
   fixedAmount: r.fixedAmount ?? null,
   holidayRate: r.holidayRate ?? null,
 });
@@ -395,7 +402,9 @@ export const createPayrollSheet = createServerFn({ method: "POST" })
       const [prev] = await db
         .select()
         .from(payrollSheets)
-        .where(and(eq(payrollSheets.companyId, data.companyId), lt(payrollSheets.month, data.month)))
+        .where(
+          and(eq(payrollSheets.companyId, data.companyId), lt(payrollSheets.month, data.month)),
+        )
         .orderBy(desc(payrollSheets.month))
         .limit(1);
       if (prev) {
@@ -480,7 +489,10 @@ export const getPayrollSheet = createServerFn({ method: "POST" })
  * People who exist ONLY on this sheet: on no other payroll sheet, in no other company, and with no
  * Salary Sheet line or shift. These are the ones a mistaken import leaves behind.
  */
-async function staffOnlyOnSheet(sheetId: string, companyId: string): Promise<{ id: string; name: string }[]> {
+async function staffOnlyOnSheet(
+  sheetId: string,
+  companyId: string,
+): Promise<{ id: string; name: string }[]> {
   const lines = await db
     .select({ staffId: payrollLines.staffId })
     .from(payrollLines)
@@ -493,13 +505,27 @@ async function staffOnlyOnSheet(sheetId: string, companyId: string): Promise<{ i
         .select({ id: payrollLines.staffId })
         .from(payrollLines)
         .where(and(inArray(payrollLines.staffId, part), ne(payrollLines.sheetId, sheetId))),
-      db.select({ id: salaryEntries.staffId }).from(salaryEntries).where(inArray(salaryEntries.staffId, part)),
-      db.select({ id: salaryShifts.staffId }).from(salaryShifts).where(inArray(salaryShifts.staffId, part)),
+      db
+        .select({ id: salaryEntries.staffId })
+        .from(salaryEntries)
+        .where(inArray(salaryEntries.staffId, part)),
+      db
+        .select({ id: salaryShifts.staffId })
+        .from(salaryShifts)
+        .where(inArray(salaryShifts.staffId, part)),
       db
         .select({ id: payrollCompanyStaff.staffId })
         .from(payrollCompanyStaff)
-        .where(and(inArray(payrollCompanyStaff.staffId, part), ne(payrollCompanyStaff.companyId, companyId))),
-      db.select({ id: payrollStaff.id, name: payrollStaff.name }).from(payrollStaff).where(inArray(payrollStaff.id, part)),
+        .where(
+          and(
+            inArray(payrollCompanyStaff.staffId, part),
+            ne(payrollCompanyStaff.companyId, companyId),
+          ),
+        ),
+      db
+        .select({ id: payrollStaff.id, name: payrollStaff.name })
+        .from(payrollStaff)
+        .where(inArray(payrollStaff.id, part)),
     ]);
     const used = new Set([...elsewhere, ...entries, ...shifts, ...links].map((r) => r.id));
     for (const r of rows) if (!used.has(r.id)) out.push(r);
@@ -548,7 +574,9 @@ export const deletePayrollSheet = createServerFn({ method: "POST" })
       module: "payroll",
       entityId: sheet.id,
       label,
-      ...(removed > 0 ? { details: `${removed} staff only on this sheet moved to the Recycle Bin` } : {}),
+      ...(removed > 0
+        ? { details: `${removed} staff only on this sheet moved to the Recycle Bin` }
+        : {}),
     });
     return { ok: true, removedStaff: removed };
   });
@@ -602,6 +630,7 @@ const linePatch = z
     holidayEntitlement: hoursNum,
     comment: z.string().trim().max(200),
     rate: z.number().min(0).max(10000),
+    uniformCost: z.number().finite().min(0).max(1000000).multipleOf(0.01),
     fixedAmount: z.number().min(0).max(1000000).nullable(),
     holidayRate: z.number().min(0).max(10000).nullable(),
   })
@@ -936,7 +965,6 @@ export const pushToSalarySheet = createServerFn({ method: "POST" })
     };
   });
 
-
 /* ------------------------------------------------------------------ */
 /* Excel import ("All Payroll Format" file -> this sheet)               */
 /* ------------------------------------------------------------------ */
@@ -1102,7 +1130,8 @@ export const importPayrollSheet = createServerFn({ method: "POST" })
         comment = row.comment || existing.comment;
         rate = row.rate ?? existing.rate;
         // a file row with hours is an hourly line; a file row without hours may be a fixed-pay line
-        fixed = row.fixedAmount ?? (fileUnits !== null || fileBh !== null ? null : existing.fixedAmount);
+        fixed =
+          row.fixedAmount ?? (fileUnits !== null || fileBh !== null ? null : existing.fixedAmount);
         holidayRate = row.holidayRate ?? existing.holidayRate;
         if (!data.updateExisting) {
           action = "skip";
@@ -1140,6 +1169,7 @@ export const importPayrollSheet = createServerFn({ method: "POST" })
         holidayEntitlement: entitlement,
         rate,
         fixedAmount: fixed,
+        uniformCost: existing?.uniformCost ?? 0,
         holidayRate,
       });
 
@@ -1210,7 +1240,10 @@ export const importPayrollSheet = createServerFn({ method: "POST" })
         const rowStatus = cleanDetail("contractStatus", row.contractStatus);
         const linkStatus = (rowStatus || "Active") as ContractStatus;
         const ended = linkStatus === "P45";
-        const endDate = cleanDetail("employmentEndDate", row.employmentEndDate ?? staff.employmentEndDate ?? "");
+        const endDate = cleanDetail(
+          "employmentEndDate",
+          row.employmentEndDate ?? staff.employmentEndDate ?? "",
+        );
         const [newLink] = await db
           .insert(payrollCompanyStaff)
           .values({
@@ -1220,7 +1253,10 @@ export const importPayrollSheet = createServerFn({ method: "POST" })
             active: !ended,
             rate: null,
             contractStatus: linkStatus,
-            startDate: staff.employmentStartDate || cleanDetail("employmentStartDate", row.employmentStartDate) || null,
+            startDate:
+              staff.employmentStartDate ||
+              cleanDetail("employmentStartDate", row.employmentStartDate) ||
+              null,
             endDate: linkStatus === "Active" ? null : endDate || null,
           })
           .onConflictDoNothing()
@@ -1264,7 +1300,8 @@ export const importPayrollSheet = createServerFn({ method: "POST" })
         for (const [f, v] of Object.entries(fills)) {
           const column = payrollStaff[f as StaffDetailField];
           // keeps any value that is already there, so two imports at once can't overwrite anything
-          set[f] = sql`CASE WHEN ${column} IS NULL OR ${column} = '' THEN ${v}::text ELSE ${column} END`;
+          set[f] =
+            sql`CASE WHEN ${column} IS NULL OR ${column} = '' THEN ${v}::text ELSE ${column} END`;
         }
         await db
           .update(payrollStaff)

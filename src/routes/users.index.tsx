@@ -17,6 +17,7 @@ import {
   LockKeyhole,
   Pencil,
   Plus,
+  ListChecks,
   Receipt,
   ReceiptText,
   Settings as SettingsIcon,
@@ -46,6 +47,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { MIN_PASSWORD_LENGTH } from "@/lib/passwordPolicy";
 import {
   Dialog,
   DialogContent,
@@ -86,10 +88,13 @@ const MODULE_ICONS: Record<Module, typeof LayoutDashboard> = {
   creditNotes: FileMinus,
   hours: Clock,
   salary: Banknote,
+  timesheets: ListChecks,
   staff: IdCard,
   reports: Receipt,
   payroll: FileSpreadsheet,
   settings: SettingsIcon,
+  tasks: ClipboardList,
+  followUps: ClipboardList,
 };
 
 function UsersPage() {
@@ -266,11 +271,18 @@ function UserDialog({
     }
   }, [open, user]);
 
+  // Any action other than View needs View (you cannot edit what you cannot open),
+  // and removing View removes everything else for that module.
   const toggle = (module: Module, action: Action, value: boolean) => {
-    setPermissions((p) => ({
-      ...p,
-      [module]: { ...p[module], [action]: value },
-    }));
+    setPermissions((p) => {
+      const next = { ...p[module], [action]: value };
+      if (action === "view" && !value) {
+        for (const a of Object.keys(next) as Action[]) next[a] = false;
+      } else if (action !== "view" && value && MODULE_ACTIONS[module].includes("view")) {
+        next.view = true;
+      }
+      return { ...p, [module]: next };
+    });
   };
 
   const applyPreset = (preset: "full" | "none") => {
@@ -282,12 +294,12 @@ function UserDialog({
       toast.error("Username is required.");
       return;
     }
-    if (!user && password.length < 8) {
-      toast.error("Password must be at least 8 characters.");
+    if (!user && password.length < MIN_PASSWORD_LENGTH) {
+      toast.error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
-    if (password && password.length < 8) {
-      toast.error("Password must be at least 8 characters.");
+    if (password && password.length < MIN_PASSWORD_LENGTH) {
+      toast.error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
 
@@ -368,7 +380,7 @@ function UserDialog({
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={user ? "••••••••" : "At least 8 characters"}
+              placeholder={user ? "••••••••" : `At least ${MIN_PASSWORD_LENGTH} characters`}
             />
           </div>
           <div>

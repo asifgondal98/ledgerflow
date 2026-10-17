@@ -31,7 +31,11 @@ export const usePeriodSheet = (periodId: string | null) =>
   });
 
 export const useAllPayrollCompanies = (enabled = true) =>
-  useQuery({ queryKey: salaryKeys.companies, queryFn: () => unwrap(listPayrollCompanies()), enabled });
+  useQuery({
+    queryKey: salaryKeys.companies,
+    queryFn: () => unwrap(listPayrollCompanies()),
+    enabled,
+  });
 
 /** Every shift company (RSS, ESS and the ones the client added), incl. switched-off ones. */
 export const useShiftCompanies = (enabled = true) =>
@@ -74,7 +78,16 @@ export function errorMessage(err: unknown, fallback: string): string {
     if (err.status === 401) return "Your session has expired — please sign in again.";
     return fallback;
   }
-  if (err instanceof Error && err.message) return err.message;
+  if (err instanceof Error && err.message) {
+    // Infrastructure details never belong in a user-facing toast.
+    if (
+      /failed query|\bparams:|postgres(?:ql)?:\/\/|\b(?:select|insert into|update|delete from|alter table)\b|password|api[_ -]?key|connection string|stack trace|\bSQLSTATE\b/i.test(
+        err.message,
+      )
+    )
+      return fallback;
+    return err.message;
+  }
   return fallback;
 }
 

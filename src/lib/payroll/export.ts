@@ -248,47 +248,6 @@ export async function exportSalarySheet(
     ws.getCell(n, sortCodeCol).numFmt = "@";
   });
 
-  // totals row
-  const last = first + rows.length - 1;
-  const tr = last + 2;
-  const totals = sumRows(rows);
-  ws.getCell(tr, C.name).value = "TOTAL";
-  const sumCell = (c: number, result: number) => {
-    ws.getCell(tr, c).value = rows.length
-      ? { formula: `SUM(${col(c)}${first}:${col(c)}${last})`, result }
-      : 0;
-  };
-  sumCell(C.rssAmt, totals.rssAmount);
-  sumCell(C.rssHrs, totals.rssHours);
-  sumCell(C.essAmt, totals.essAmount);
-  sumCell(C.essHrs, totals.essHours);
-  extraCodes.forEach((code, k) => {
-    sumCell(xAmt(k), totals.byShift[code]?.amount ?? 0);
-    sumCell(xHrs(k), totals.byShift[code]?.hours ?? 0);
-  });
-  sumCell(C.carry, totals.carryForward);
-  sumCell(C.exp, totals.expenses);
-  sumCell(C.totHrs, totals.totalHours);
-  sumCell(C.totAmt, totals.totalAmount);
-  payrollCols.forEach((p, k) => {
-    const res = p.id
-      ? (totals.byCompany[p.id] ?? 0)
-      : Object.entries(totals.byCompany).reduce((s, [id, v]) => (known.has(id) ? s : s + v), 0);
-    sumCell(firstPay + k, round2(res));
-  });
-  sumCell(tax, totals.taxDeduction);
-  sumCell(totPayroll, totals.payrollTotal);
-  for (let k = 0; k < nPay; k++) {
-    sumCell(p1 + k, round2(rows.reduce((s, r) => s + (r.payments[k]?.amount ?? 0), 0)));
-  }
-  sumCell(totCash, totals.cashPaid);
-  sumCell(deduction, totals.deduction);
-  sumCell(outstanding, totals.outstanding);
-  ws.getRow(tr).font = { bold: true };
-  ws.getRow(tr).eachCell((cell) => {
-    cell.border = { top: { style: "thin", color: { argb: "FF6B7280" } } };
-  });
-
   // formats + widths
   const moneyCols = [
     C.rssAmt,
@@ -306,6 +265,54 @@ export async function exportSalarySheet(
     outstanding,
   ];
   for (const c of moneyCols) ws.getColumn(c).numFmt = money;
+
+  // Totals row: ONE rule for every column, the same as the dashboard: SUMIF(range, ">0").
+  // A new column only needs adding to totalCols.
+  const last = first + rows.length - 1;
+  const tr = last + 2;
+  ws.getCell(tr, C.name).value = "TOTAL (SUMIF > 0)";
+  const cellNum = (r: number, c: number): number => {
+    const v = ws.getCell(r, c).value as unknown;
+    if (typeof v === "number") return v;
+    if (v && typeof v === "object" && "result" in v)
+      return Number((v as { result?: unknown }).result) || 0;
+    return 0;
+  };
+  const totalCols = [
+    C.rssAmt,
+    C.rssHrs,
+    C.essAmt,
+    C.essHrs,
+    ...extraCodes.flatMap((_, k) => [xAmt(k), xHrs(k)]),
+    C.carry,
+    C.exp,
+    C.totHrs,
+    ...moneyCols.filter((c) => c !== C.rssAmt && c !== C.essAmt && c !== C.carry && c !== C.exp),
+  ];
+  for (const c of new Set(totalCols)) {
+    let res = 0;
+    for (let r = first; r <= last; r++) {
+      const v = cellNum(r, c);
+      if (v > 0) res += v;
+    }
+    ws.getCell(tr, c).value = rows.length
+      ? { formula: `SUMIF(${col(c)}${first}:${col(c)}${last},">0")`, result: round2(res) }
+      : 0;
+  }
+  ws.getRow(tr).font = { bold: true };
+  ws.getRow(tr).eachCell((cell) => {
+    cell.border = { top: { style: "thin", color: { argb: "FF6B7280" } } };
+  });
+  // Definition of the calculation, as a footnote under the totals.
+  const noteRow = tr + 2;
+  ws.getCell(noteRow, C.name).value =
+    'Totals: SUMIF(column range, ">0") — the sum of positive line amounts only. Overpaid (negative) lines are not netted off.';
+  ws.getCell(noteRow + 1, C.name).value =
+    "Outstanding (per line) = Total Amount − Total Payroll − Total Cash Paid − Deduction.";
+  for (const nr of [noteRow, noteRow + 1]) {
+    ws.getCell(nr, C.name).font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
+  }
+
   for (const c of [C.rssHrs, C.essHrs, C.totHrs, ...extraCodes.map((_, k) => xHrs(k))])
     ws.getColumn(c).numFmt = "#,##0.00";
   ws.getColumn(1).width = 2;
